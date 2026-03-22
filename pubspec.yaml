@@ -1,7 +1,7 @@
 name: dartantic_llamadart
 description: Local GGUF model support for Dartantic AI using llamadart.
 version: 0.1.0
-repository: https://github.com/your-username/dartantic_llamadart
+repository: https://github.com/BoundlessNotions/dartantic_llamadart
 
 environment:
   sdk: '>=3.10.7 <4.0.0'
