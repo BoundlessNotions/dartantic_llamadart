@@ -1,30 +1,27 @@
 import 'package:dartantic_interface/dartantic_interface.dart';
-import 'llamadart_provider.dart';
 
 /// An embeddings model implementation using the Llamadart engine.
 class LlamadartEmbeddingsModel extends EmbeddingsModel<EmbeddingsModelOptions> {
-  @override
-  final LlamadartProvider provider;
-
-  @override
-  final String modelName;
-
-  @override
-  final EmbeddingsModelOptions defaultOptions;
-
   LlamadartEmbeddingsModel({
-    required this.provider,
-    required this.modelName,
-    required this.defaultOptions,
+    required super.name,
+    required super.defaultOptions,
   });
 
   @override
-  Future<List<double>> embed(
-    String input, {
+  Future<EmbeddingsResult> embedQuery(
+    String query, {
     EmbeddingsModelOptions? options,
   }) async {
     // TODO: Implement embeddings using llamadart native API.
-    // LlamaModel/Context needs to be configured with embedding: true
+    throw UnimplementedError('Embeddings are not yet implemented.');
+  }
+
+  @override
+  Future<BatchEmbeddingsResult> embedDocuments(
+    List<String> documents, {
+    EmbeddingsModelOptions? options,
+  }) async {
+    // TODO: Implement embeddings using llamadart native API.
     throw UnimplementedError('Embeddings are not yet implemented.');
   }
 

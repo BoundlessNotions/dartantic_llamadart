@@ -81,19 +81,19 @@ void initializeAiEnvironment() {
 
 ## 5. Phase-by-Phase Execution
 
-### Phase 1: Local Implementation (Days 1-3)
-- Scaffolding the repo and implementing the `Provider` and `ChatModel` classes.
-- Internal testing with the `llama3.2-1b-it-int4.gguf` model already in AetherForge.
+### Phase 1: Local Implementation (Days 1-3) ✅ COMPLETED
+- [x] Scaffolding the repo and implementing the `Provider` and `ChatModel` classes.
+- [x] Internal testing with the `llama3.2-1b-it-int4.gguf` model already in AetherForge.
 
-### Phase 2: Tool Call Logic (Days 4-5)
-- Developing the GBNF grammar or prompt-wrapper to ensure 100% JSON reliability for tool calls from small models.
-- Implementing the `ToolPart` parser.
+### Phase 2: Tool Call Logic (Days 4-5) ✅ COMPLETED
+- [x] Developing the GBNF grammar or prompt-wrapper to ensure 100% JSON reliability for tool calls from small models.
+- [x] Implementing the `ToolPart` parser.
 
-### Phase 3: Publication (Day 6)
-- Writing documentation and publishing to `pub.dev`.
+### Phase 3: Publication (Day 6) ❌ NOT STARTED
+- [ ] Writing documentation and publishing to `pub.dev`.
 
-### Phase 4: AetherForge Migration (Day 7)
-- Replacing the custom `DeckArchitect` loops with `dartantic.Agent` calls using the new `llamadart` provider.
+### Phase 4: AetherForge Migration (Day 7) ❌ NOT STARTED
+- [ ] Replacing the custom `DeckArchitect` loops with `dartantic.Agent` calls using the new `llamadart` provider.
 
 ---
 

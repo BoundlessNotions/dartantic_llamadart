@@ -5,9 +5,7 @@ import 'llamadart_embeddings_model.dart';
 
 /// A provider for the Llamadart engine.
 class LlamadartProvider
-    implements
-        Provider<LlamadartChatOptions, EmbeddingsModelOptions,
-            MediaGenerationModelOptions> {
+    implements Provider<LlamadartChatOptions, EmbeddingsModelOptions> {
   @override
   final String name;
 
@@ -17,7 +15,7 @@ class LlamadartProvider
   /// The local path to the GGUF model.
   final String modelPath;
 
-  /// Default model names for different kinds of tasks.
+  @override
   final Map<ModelKind, String> defaultModelNames;
 
   LlamadartProvider({
@@ -28,34 +26,57 @@ class LlamadartProvider
   });
 
   @override
+  List<String> get aliases => [];
+
+  @override
+  String? get apiKey => null;
+
+  @override
+  String? get apiKeyName => null;
+
+  @override
+  Uri? get baseUrl => null;
+
+  @override
+  Set<ProviderCaps> get caps => {ProviderCaps.chat, ProviderCaps.thinking};
+
+  @override
+  Stream<ModelInfo> listModels() async* {
+    yield ModelInfo(
+      name: defaultModelNames[ModelKind.chat] ?? 'default',
+      providerName: name,
+      kinds: {ModelKind.chat},
+    );
+  }
+
+  @override
   ChatModel<LlamadartChatOptions> createChatModel({
-    String? modelName,
-    LlamadartChatOptions? defaultOptions,
+    String? name,
+    LlamadartChatOptions? options,
+    double? temperature,
+    List<Tool>? tools,
+    bool enableThinking = false,
   }) {
+    final modelName = name ?? defaultModelNames[ModelKind.chat] ?? 'default';
     return LlamadartChatModel(
       provider: this,
-      modelName: modelName ?? defaultModelNames[ModelKind.chat] ?? 'default',
-      defaultOptions: defaultOptions ?? const LlamadartChatOptions(),
+      name: modelName,
+      defaultOptions: (options ?? const LlamadartChatOptions()).copyWith(
+        temp: temperature,
+      ),
     );
   }
 
   @override
   EmbeddingsModel<EmbeddingsModelOptions> createEmbeddingsModel({
-    String? modelName,
-    EmbeddingsModelOptions? defaultOptions,
+    String? name,
+    EmbeddingsModelOptions? options,
   }) {
+    final modelName =
+        name ?? defaultModelNames[ModelKind.embeddings] ?? 'default';
     return LlamadartEmbeddingsModel(
-      provider: this,
-      modelName: modelName ?? defaultModelNames[ModelKind.embeddings] ?? 'default',
-      defaultOptions: defaultOptions ?? const EmbeddingsModelOptions(),
+      name: modelName,
+      defaultOptions: options ?? const EmbeddingsModelOptions(),
     );
-  }
-
-  @override
-  MediaGenerationModel<MediaGenerationModelOptions> createMediaGenerationModel({
-    String? modelName,
-    MediaGenerationModelOptions? defaultOptions,
-  }) {
-    throw UnimplementedError('Media generation is not supported by Llamadart.');
   }
 }

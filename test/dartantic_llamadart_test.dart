@@ -40,7 +40,7 @@ void main() {
       );
 
       final model = provider.createChatModel();
-      expect(model.modelName, 'default');
+      expect(model.name, 'default');
     });
   });
 }

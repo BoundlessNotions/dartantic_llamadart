@@ -29,7 +29,6 @@ class LlamadartChatOptions extends ChatModelOptions {
     this.repeatPenalty,
   });
 
-  @override
   LlamadartChatOptions copyWith({
     int? nCtx,
     int? nGpuLayers,

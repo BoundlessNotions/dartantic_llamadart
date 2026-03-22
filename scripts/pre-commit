@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# Pre-commit hook for AetherForge AI
+# Checks for formatting, linting, and runs tests.
+
+set -e
+
+echo "Running Pre-Commit Checks..."
+
+# 1. Apply automated fixes
+echo "Applying automated fixes..."
+fvm dart fix --apply
+git add -u
+
+# 2. Format Check
+echo "Checking formatting..."
+fvm dart format --output=write --set-exit-if-changed lib test
+git add -u
+
+# 3. Analyze
+# We allow infos and warnings to pass for now to avoid blocking commits
+# during rapid development, but errors will still fail.
+echo "Running static analysis..."
+fvm flutter analyze --no-fatal-infos
+
+# 4. Test
+echo "Running unit tests..."
+fvm flutter test
+
+echo "Pre-commit checks passed!"
+exit 0

@@ -9,7 +9,7 @@ This package allows you to run fully offline AI agents in Flutter and Dart appli
 - **Local Inference:** Run models entirely on-device without an internet connection.
 - **Dartantic Interface:** Seamlessly integrates with the Dartantic AI ecosystem.
 - **GPU Acceleration:** Inherits hardware acceleration support from `llamadart`.
-- **Tool Calling:** Supports structured tool calls using a prompt-wrapped XML approach (GBNF support coming soon).
+- **Tool Calling:** Supports structured tool calls using XML-tag wrapper format (`<tool_call>`).
 
 ## Getting Started
 
@@ -63,6 +63,26 @@ final model = provider.createChatModel(
   ),
 );
 ```
+
+## Tool Calling
+
+To use tool calling with local GGUF models, include instructions in your system prompt to use the `<tool_call>` XML format:
+
+```dart
+final messages = [
+  ChatMessage(
+    role: ChatMessageRole.system,
+    parts: [TextPart('''You have access to tools. When you need to call a tool, output:
+<tool_call>{"tool_name": {"param1": "value1"}}</tool_call>
+
+Example: <tool_call>{"search": {"query": "weather"}}</tool_call>
+''')],
+  ),
+  ChatMessage(role: ChatMessageRole.user, parts: [TextPart('Search for AI news')]),
+];
+```
+
+The model will output tool calls wrapped in `<tool_call>` tags, which are automatically parsed into `ToolPart` objects.
 
 ## License
 

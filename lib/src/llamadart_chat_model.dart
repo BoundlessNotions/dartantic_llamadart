@@ -1,122 +1,194 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:llamadart/llamadart.dart';
+import 'package:json_schema/json_schema.dart';
+
 import 'llamadart_chat_options.dart';
 import 'llamadart_provider.dart';
 
 /// A chat model implementation using the Llamadart engine.
 class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
-  @override
   final LlamadartProvider provider;
 
-  @override
-  final String modelName;
-
-  @override
-  final LlamadartChatOptions defaultOptions;
-
-  LlamaModel? _model;
-  LlamaContext? _context;
+  LlamaEngine? _engine;
+  ChatSession? _session;
 
   LlamadartChatModel({
     required this.provider,
-    required this.modelName,
-    required this.defaultOptions,
+    required super.name,
+    required super.defaultOptions,
   });
 
   Future<void> _ensureInitialized() async {
-    if (_model != null) return;
-    _model = LlamaModel(modelPath: provider.modelPath);
-    _context = _model!.createContext();
+    if (_engine != null) return;
+
+    // Initialize engine with native backend
+    final backend = LlamaBackend();
+    _engine = LlamaEngine(backend);
+
+    // Load the model
+    await _engine!.loadModel(
+      provider.modelPath,
+      modelParams: ModelParams(
+        contextSize: defaultOptions.nCtx ?? 2048,
+        gpuLayers: defaultOptions.nGpuLayers ?? 0,
+      ),
+    );
+
+    _session = ChatSession(_engine!);
   }
 
   @override
-  Stream<ChatResult<ChatMessage>> stream(
-    Iterable<ChatMessage> messages, {
+  Stream<ChatResult<ChatMessage>> sendStream(
+    List<ChatMessage> messages, {
     LlamadartChatOptions? options,
-    Iterable<Tool>? tools,
+    JsonSchema? outputSchema,
   }) async* {
     await _ensureInitialized();
+
+    _session!.reset();
+
+    final allMessages = messages.toList();
+    if (allMessages.isEmpty) return;
+
+    final lastMessage = allMessages.removeLast();
+
+    for (final msg in allMessages) {
+      _session!.addMessage(_toLlamaMessage(msg));
+    }
+
+    final contentParts = _toLlamaContentParts(lastMessage);
+
     final effectiveOptions = options ?? defaultOptions;
+    final buffer = StringBuffer();
+    int toolCallIdCounter = 0;
 
-    // TODO: Implement more sophisticated prompt engineering for tools.
-    // For now, we append a system instruction if tools are present.
-    final prompt = _buildPrompt(messages, tools);
+    await for (final chunk in _session!.create(
+      contentParts,
+      enableThinking: true,
+      params: GenerationParams(
+        temp: effectiveOptions.temp ?? 0.8,
+        topK: effectiveOptions.topK ?? 40,
+        topP: effectiveOptions.topP ?? 0.9,
+        penalty: effectiveOptions.repeatPenalty ?? 1.1,
+      ),
+    )) {
+      final delta = chunk.choices.firstOrNull?.delta;
+      if (delta == null) continue;
 
-    final session = ChatSession(
-      context: _context!,
-      // grammar: _buildGrammar(tools), // TODO: Implement GBNF grammar
-    );
+      if (delta.content != null && delta.content!.isNotEmpty) {
+        buffer.write(delta.content!);
 
-    String fullContent = '';
-    await for (final token in session.chat(prompt)) {
-      fullContent += token;
+        final bufferedContent = buffer.toString();
+        final toolCallPattern = RegExp(
+          r'<tool_call>(.*?)</tool_call>',
+          dotAll: true,
+        );
+        final matches = toolCallPattern.allMatches(bufferedContent);
+
+        if (matches.isNotEmpty) {
+          int lastEnd = 0;
+          final parts = <Part>[];
+
+          for (final match in matches) {
+            if (match.start > lastEnd) {
+              parts.add(
+                TextPart(bufferedContent.substring(lastEnd, match.start)),
+              );
+            }
+
+            final toolCallContent = match.group(1)!;
+            final parsed = _parseToolCall(
+              toolCallContent,
+              'call_${toolCallIdCounter++}',
+            );
+            parts.add(parsed);
+
+            lastEnd = match.end;
+          }
+
+          if (lastEnd < bufferedContent.length) {
+            buffer.clear();
+            buffer.write(bufferedContent.substring(lastEnd));
+          } else {
+            buffer.clear();
+          }
+
+          yield ChatResult(
+            output: ChatMessage(role: ChatMessageRole.model, parts: parts),
+          );
+        } else {
+          yield ChatResult(
+            output: ChatMessage(
+              role: ChatMessageRole.model,
+              parts: [TextPart(delta.content!)],
+            ),
+          );
+        }
+      }
+
+      if (delta.thinking != null && delta.thinking!.isNotEmpty) {
+        // Thinking can be handled via metadata or specific Part if available.
+        // For now we might just yield it as text or skip.
+      }
+    }
+
+    final remainingContent = buffer.toString();
+    if (remainingContent.isNotEmpty) {
       yield ChatResult(
-        message: ChatMessage(
-          role: ChatRole.assistant,
-          parts: [TextPart(token)],
+        output: ChatMessage(
+          role: ChatMessageRole.model,
+          parts: [TextPart(remainingContent)],
         ),
       );
     }
-
-    // TODO: Parse tool calls from fullContent if they were generated.
   }
 
-  @override
-  Future<ChatResult<ChatMessage>> generate(
-    Iterable<ChatMessage> messages, {
-    LlamadartChatOptions? options,
-    Iterable<Tool>? tools,
-  }) async {
-    final resultStream = stream(messages, options: options, tools: tools);
-    ChatMessage? lastMessage;
-    String fullContent = '';
-
-    await for (final result in resultStream) {
-      lastMessage = result.message;
-      for (final part in result.message.parts) {
-        if (part is TextPart) {
-          fullContent += part.text;
-        }
-      }
+  ToolPart _parseToolCall(String content, String id) {
+    try {
+      final json = jsonDecode(content) as Map<String, dynamic>;
+      final toolName = json.keys.first;
+      final parameters = (json[toolName] as Map<String, dynamic>?) ?? {};
+      return ToolPart.call(id: id, name: toolName, arguments: parameters);
+    } catch (e) {
+      return ToolPart.call(
+        id: id,
+        name: 'error',
+        arguments: {'error': 'Invalid tool call format: $content'},
+      );
     }
+  }
 
-    return ChatResult(
-      message: ChatMessage(
-        role: ChatRole.assistant,
-        parts: [TextPart(fullContent)],
-      ),
+  LlamaChatMessage _toLlamaMessage(ChatMessage msg) {
+    return LlamaChatMessage.withContent(
+      role: _toLlamaRole(msg.role),
+      content: _toLlamaContentParts(msg),
     );
   }
 
-  String _buildPrompt(Iterable<ChatMessage> messages, Iterable<Tool>? tools) {
-    final buffer = StringBuffer();
-
-    if (tools != null && tools.isNotEmpty) {
-      buffer.writeln('SYSTEM: You have access to the following tools:');
-      for (final tool in tools) {
-        buffer.writeln('- ${tool.name}: ${tool.description}');
-        buffer.writeln('  Arguments: ${tool.inputSchema}');
+  List<LlamaContentPart> _toLlamaContentParts(ChatMessage msg) {
+    return msg.parts.map((part) {
+      if (part is TextPart) {
+        return LlamaTextContent(part.text);
       }
-      buffer.writeln(
-          'To call a tool, use the format: <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>');
-    }
-
-    for (final message in messages) {
-      buffer.writeln('${message.role.name.toUpperCase()}: ${_messageContent(message)}');
-    }
-    buffer.writeln('ASSISTANT:');
-
-    return buffer.toString();
+      return LlamaTextContent(part.toString());
+    }).toList();
   }
 
-  String _messageContent(ChatMessage message) {
-    return message.parts.whereType<TextPart>().map((e) => e.text).join('\n');
+  LlamaChatRole _toLlamaRole(ChatMessageRole role) {
+    switch (role) {
+      case ChatMessageRole.user:
+        return LlamaChatRole.user;
+      case ChatMessageRole.model:
+        return LlamaChatRole.assistant;
+      case ChatMessageRole.system:
+        return LlamaChatRole.system;
+    }
   }
 
   @override
   void dispose() {
-    _context?.dispose();
-    _model?.dispose();
+    _engine?.dispose();
   }
 }

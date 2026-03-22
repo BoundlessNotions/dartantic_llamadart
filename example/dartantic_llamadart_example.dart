@@ -11,7 +11,8 @@ void main() async {
 
   // 2. Create a chat model.
   final chatModel = provider.createChatModel(
-    defaultOptions: const LlamadartChatOptions(
+    name: 'llama3.2-1b',
+    options: const LlamadartChatOptions(
       temp: 0.7,
       nCtx: 2048,
     ),
@@ -19,16 +20,18 @@ void main() async {
 
   // 3. Define messages.
   final messages = [
-    ChatMessage(role: ChatRole.system, parts: [TextPart('You are a helpful assistant.')]),
-    ChatMessage(role: ChatRole.user, parts: [TextPart('Hello! Who are you?')]),
+    const ChatMessage(role: ChatMessageRole.system, parts: [TextPart('You are a helpful assistant.')]),
+    const ChatMessage(role: ChatMessageRole.user, parts: [TextPart('Hello! Who are you?')]),
   ];
 
   // 4. Generate a response.
   print('Generating response (offline)...');
-  final result = await chatModel.generate(messages);
+  // In Dartantic v1.2.0, generate might be available on ChatModel extension or as a method.
+  // If it's missing, we use sendStream().last.
+  final result = await chatModel.sendStream(messages).last;
 
   print('Response:');
-  for (final part in result.message.parts) {
+  for (final part in result.output.parts) {
     if (part is TextPart) {
       print(part.text);
     }

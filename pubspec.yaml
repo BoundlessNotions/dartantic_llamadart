@@ -4,12 +4,13 @@ version: 0.1.0
 repository: https://github.com/your-username/dartantic_llamadart
 
 environment:
-  sdk: ^3.0.0
+  sdk: '>=3.10.7 <4.0.0'
 
 dependencies:
   dartantic_interface: ^1.0.0
   llamadart: ^0.6.7
   meta: ^1.11.0
+  json_schema: ^5.2.0
 
 dev_dependencies:
   lints: ^3.0.0
