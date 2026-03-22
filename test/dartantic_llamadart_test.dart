@@ -4,10 +4,7 @@ import 'package:test/test.dart';
 void main() {
   group('LlamadartChatOptions', () {
     test('can be created with options', () {
-      const options = LlamadartChatOptions(
-        temp: 0.5,
-        nCtx: 1024,
-      );
+      const options = LlamadartChatOptions(temp: 0.5, nCtx: 1024);
       expect(options.temp, 0.5);
       expect(options.nCtx, 1024);
     });
