@@ -12,16 +12,19 @@ void main() async {
   // 2. Create a chat model.
   final chatModel = provider.createChatModel(
     name: 'llama3.2-1b',
-    options: const LlamadartChatOptions(
-      temp: 0.7,
-      nCtx: 2048,
-    ),
+    options: const LlamadartChatOptions(temp: 0.7, nCtx: 2048),
   );
 
   // 3. Define messages.
   final messages = [
-    const ChatMessage(role: ChatMessageRole.system, parts: [TextPart('You are a helpful assistant.')]),
-    const ChatMessage(role: ChatMessageRole.user, parts: [TextPart('Hello! Who are you?')]),
+    ChatMessage(
+      role: ChatMessageRole.system,
+      parts: [TextPart('You are a helpful assistant.')],
+    ),
+    ChatMessage(
+      role: ChatMessageRole.user,
+      parts: [TextPart('Hello! Who are you?')],
+    ),
   ];
 
   // 4. Generate a response.

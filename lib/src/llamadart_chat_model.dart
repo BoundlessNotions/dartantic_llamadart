@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:llamadart/llamadart.dart';
-import 'package:json_schema/json_schema.dart';
 
 import 'llamadart_chat_options.dart';
 import 'llamadart_provider.dart';
@@ -43,7 +42,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   Stream<ChatResult<ChatMessage>> sendStream(
     List<ChatMessage> messages, {
     LlamadartChatOptions? options,
-    JsonSchema? outputSchema,
+    Schema? outputSchema,
   }) async* {
     await _ensureInitialized();
 
@@ -129,8 +128,12 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       }
 
       if (delta.thinking != null && delta.thinking!.isNotEmpty) {
-        // Thinking can be handled via metadata or specific Part if available.
-        // For now we might just yield it as text or skip.
+        yield ChatResult(
+          output: ChatMessage(
+            role: ChatMessageRole.model,
+            parts: [ThinkingPart(delta.thinking!)],
+          ),
+        );
       }
     }
 
@@ -145,16 +148,20 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     }
   }
 
-  ToolPart _parseToolCall(String content, String id) {
+  ToolPart _parseToolCall(String content, String callId) {
     try {
       final json = jsonDecode(content) as Map<String, dynamic>;
       final toolName = json.keys.first;
       final parameters = (json[toolName] as Map<String, dynamic>?) ?? {};
-      return ToolPart.call(id: id, name: toolName, arguments: parameters);
+      return ToolPart.call(
+        callId: callId,
+        toolName: toolName,
+        arguments: parameters,
+      );
     } catch (e) {
       return ToolPart.call(
-        id: id,
-        name: 'error',
+        callId: callId,
+        toolName: 'error',
         arguments: {'error': 'Invalid tool call format: $content'},
       );
     }

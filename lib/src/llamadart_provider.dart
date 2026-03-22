@@ -3,26 +3,21 @@ import 'llamadart_chat_options.dart';
 import 'llamadart_chat_model.dart';
 import 'llamadart_embeddings_model.dart';
 
-/// A provider for the Llamadart engine.
 class LlamadartProvider
-    implements Provider<LlamadartChatOptions, EmbeddingsModelOptions> {
-  @override
-  final String name;
-
-  @override
-  final String displayName;
-
-  /// The local path to the GGUF model.
+    extends
+        Provider<
+          LlamadartChatOptions,
+          EmbeddingsModelOptions,
+          MediaGenerationModelOptions
+        > {
   final String modelPath;
 
-  @override
-  final Map<ModelKind, String> defaultModelNames;
-
   LlamadartProvider({
-    required this.name,
-    required this.displayName,
+    required super.name,
+    required super.displayName,
     required this.modelPath,
-    this.defaultModelNames = const {},
+    super.defaultModelNames = const {},
+    super.headers = const {},
   });
 
   @override
@@ -38,9 +33,6 @@ class LlamadartProvider
   Uri? get baseUrl => null;
 
   @override
-  Set<ProviderCaps> get caps => {ProviderCaps.chat, ProviderCaps.thinking};
-
-  @override
   Stream<ModelInfo> listModels() async* {
     yield ModelInfo(
       name: defaultModelNames[ModelKind.chat] ?? 'default',
@@ -52,10 +44,10 @@ class LlamadartProvider
   @override
   ChatModel<LlamadartChatOptions> createChatModel({
     String? name,
-    LlamadartChatOptions? options,
+    List<Tool<Object>>? tools,
     double? temperature,
-    List<Tool>? tools,
     bool enableThinking = false,
+    LlamadartChatOptions? options,
   }) {
     final modelName = name ?? defaultModelNames[ModelKind.chat] ?? 'default';
     return LlamadartChatModel(
@@ -78,5 +70,14 @@ class LlamadartProvider
       name: modelName,
       defaultOptions: options ?? const EmbeddingsModelOptions(),
     );
+  }
+
+  @override
+  MediaGenerationModel<MediaGenerationModelOptions> createMediaModel({
+    String? name,
+    List<Tool<Object>>? tools,
+    MediaGenerationModelOptions? options,
+  }) {
+    throw UnimplementedError('Media generation is not supported.');
   }
 }
