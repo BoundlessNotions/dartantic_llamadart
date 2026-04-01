@@ -1,4 +1,7 @@
+import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
+import 'package:dartantic_llamadart/src/llamadart_chat_model.dart';
+import 'package:llamadart/llamadart.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -38,6 +41,90 @@ void main() {
 
       final model = provider.createChatModel();
       expect(model.name, 'default');
+    });
+  });
+
+  group('LlamadartChatModel', () {
+    late LlamadartProvider provider;
+    late LlamadartChatModel model;
+
+    setUp(() {
+      provider = LlamadartProvider(
+        name: 'llamadart',
+        displayName: 'Local Llama',
+        modelPath: '/path/to/model.gguf',
+      );
+      model = provider.createChatModel() as LlamadartChatModel;
+    });
+
+    test('toLlamaMessage prepends trigger for FunctionGemma with tools', () {
+      final msg = ChatMessage.system('You are a helpful assistant.');
+      final llamaMsg = model.toLlamaMessage(
+        msg,
+        format: ChatFormat.functionGemma,
+        hasTools: true,
+      );
+
+      expect(
+        llamaMsg.content,
+        startsWith(
+          'You are a model that can do function calling with the following functions',
+        ),
+      );
+      expect(llamaMsg.content, contains('You are a helpful assistant.'));
+    });
+
+    test('toLlamaMessage does not prepend trigger if already present', () {
+      const trigger =
+          'You are a model that can do function calling with the following functions';
+      final msg = ChatMessage.system('$trigger\n\nExisting system prompt.');
+      final llamaMsg = model.toLlamaMessage(
+        msg,
+        format: ChatFormat.functionGemma,
+        hasTools: true,
+      );
+
+      // Should not duplicate the trigger
+      final occurrences = trigger.allMatches(llamaMsg.content).length;
+      expect(occurrences, 1);
+    });
+
+    test('toLlamaMessage does not prepend trigger for non-FunctionGemma', () {
+      final msg = ChatMessage.system('You are a helpful assistant.');
+      final llamaMsg = model.toLlamaMessage(
+        msg,
+        format: ChatFormat.llama3,
+        hasTools: true,
+      );
+
+      expect(
+        llamaMsg.content,
+        isNot(
+          startsWith(
+            'You are a model that can do function calling with the following functions',
+          ),
+        ),
+      );
+      expect(llamaMsg.content, 'You are a helpful assistant.');
+    });
+
+    test('toLlamaMessage does not prepend trigger if no tools', () {
+      final msg = ChatMessage.system('You are a helpful assistant.');
+      final llamaMsg = model.toLlamaMessage(
+        msg,
+        format: ChatFormat.functionGemma,
+        hasTools: false,
+      );
+
+      expect(
+        llamaMsg.content,
+        isNot(
+          startsWith(
+            'You are a model that can do function calling with the following functions',
+          ),
+        ),
+      );
+      expect(llamaMsg.content, 'You are a helpful assistant.');
     });
   });
 }

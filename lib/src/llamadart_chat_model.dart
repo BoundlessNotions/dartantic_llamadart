@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:llamadart/llamadart.dart';
+import 'package:meta/meta.dart';
 
 import 'llamadart_chat_options.dart';
 import 'llamadart_provider.dart';
@@ -38,6 +39,13 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     _session = ChatSession(_engine!);
   }
 
+  Future<ChatFormat> _getChatFormat() async {
+    await _ensureInitialized();
+    final metadata = await _engine!.getMetadata();
+    final template = metadata['tokenizer.chat_template'];
+    return ChatTemplateEngine.detectFormat(template);
+  }
+
   @override
   Stream<ChatResult<ChatMessage>> sendStream(
     List<ChatMessage> messages, {
@@ -45,6 +53,9 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     Schema? outputSchema,
   }) async* {
     await _ensureInitialized();
+
+    final format = await _getChatFormat();
+    final hasTools = outputSchema != null;
 
     _session!.reset();
 
@@ -54,7 +65,9 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final lastMessage = allMessages.removeLast();
 
     for (final msg in allMessages) {
-      _session!.addMessage(_toLlamaMessage(msg));
+      _session!.addMessage(
+        toLlamaMessage(msg, format: format, hasTools: hasTools),
+      );
     }
 
     final contentParts = _toLlamaContentParts(lastMessage);
@@ -167,20 +180,53 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     }
   }
 
-  LlamaChatMessage _toLlamaMessage(ChatMessage msg) {
+  @visibleForTesting
+  LlamaChatMessage toLlamaMessage(
+    ChatMessage msg, {
+    required ChatFormat format,
+    required bool hasTools,
+  }) {
+    var parts = msg.parts;
+
+    // FunctionGemma specific: Ensure the developer role activation trigger is present
+    // in system messages for tool use.
+    if (format == ChatFormat.functionGemma &&
+        msg.role == ChatMessageRole.system &&
+        hasTools) {
+      const trigger =
+          'You are a model that can do function calling with the following functions';
+      final text = msg.text;
+      if (!text.contains(trigger)) {
+        // Prepend trigger to the system message
+        if (msg.parts.isNotEmpty && msg.parts.first is TextPart) {
+          final first = msg.parts.first as TextPart;
+          parts = [
+            TextPart('$trigger\n\n${first.text}'),
+            ...msg.parts.skip(1),
+          ];
+        } else {
+          parts = [TextPart('$trigger\n\n'), ...msg.parts];
+        }
+      }
+    }
+
     return LlamaChatMessage.withContent(
       role: _toLlamaRole(msg.role),
-      content: _toLlamaContentParts(msg),
+      content: _toLlamaContentPartsFromList(parts),
     );
   }
 
-  List<LlamaContentPart> _toLlamaContentParts(ChatMessage msg) {
-    return msg.parts.map((part) {
+  List<LlamaContentPart> _toLlamaContentPartsFromList(List<Part> parts) {
+    return parts.map((part) {
       if (part is TextPart) {
         return LlamaTextContent(part.text);
       }
       return LlamaTextContent(part.toString());
     }).toList();
+  }
+
+  List<LlamaContentPart> _toLlamaContentParts(ChatMessage msg) {
+    return _toLlamaContentPartsFromList(msg.parts);
   }
 
   LlamaChatRole _toLlamaRole(ChatMessageRole role) {
