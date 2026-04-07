@@ -7,9 +7,10 @@ import 'package:meta/meta.dart';
 import 'llamadart_chat_options.dart';
 import 'llamadart_provider.dart';
 
-/// A chat model implementation using the Llamadart engine.
 class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   final LlamadartProvider provider;
+  @override
+  final List<Tool<Object>>? tools;
 
   LlamaEngine? _engine;
   ChatSession? _session;
@@ -17,22 +18,22 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   LlamadartChatModel({
     required this.provider,
     required super.name,
+    this.tools,
     required super.defaultOptions,
   });
 
   Future<void> _ensureInitialized() async {
     if (_engine != null) return;
 
-    // Initialize engine with native backend
     final backend = LlamaBackend();
     _engine = LlamaEngine(backend);
 
-    // Load the model
     await _engine!.loadModel(
       provider.modelPath,
       modelParams: ModelParams(
-        contextSize: defaultOptions.nCtx ?? 2048,
-        gpuLayers: defaultOptions.nGpuLayers ?? 0,
+        contextSize: defaultOptions.nCtx ?? 8192,
+        gpuLayers: defaultOptions.nGpuLayers ?? ModelParams.maxGpuLayers,
+        preferredBackend: defaultOptions.preferredBackend,
       ),
     );
 
@@ -55,7 +56,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     await _ensureInitialized();
 
     final format = await _getChatFormat();
-    final hasTools = outputSchema != null;
+    final hasTools =
+        outputSchema != null || (tools != null && tools!.isNotEmpty);
 
     _session!.reset();
 
@@ -74,7 +76,12 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
 
     final effectiveOptions = options ?? defaultOptions;
     final buffer = StringBuffer();
+    final thinkingBuffer = StringBuffer();
     int toolCallIdCounter = 0;
+
+    final llamadartTools = tools
+        ?.map((t) => _convertToolToDefinition(t))
+        .toList();
 
     await for (final chunk in _session!.create(
       contentParts,
@@ -84,20 +91,70 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         topK: effectiveOptions.topK ?? 40,
         topP: effectiveOptions.topP ?? 0.9,
         penalty: effectiveOptions.repeatPenalty ?? 1.1,
+        minP: effectiveOptions.minP ?? 0.05,
       ),
+      tools: llamadartTools,
+      toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
+          ? ToolChoice.auto
+          : null,
     )) {
       final delta = chunk.choices.firstOrNull?.delta;
       if (delta == null) continue;
+
+      if (delta.thinking != null && delta.thinking!.isNotEmpty) {
+        thinkingBuffer.write(delta.thinking!);
+        yield ChatResult(
+          output: ChatMessage(
+            role: ChatMessageRole.model,
+            parts: [ThinkingPart(delta.thinking!)],
+          ),
+        );
+      }
+
+      if (delta.toolCalls != null && delta.toolCalls!.isNotEmpty) {
+        final parts = <Part>[];
+        for (final tc in delta.toolCalls!) {
+          final args = <String, dynamic>{};
+          if (tc.function?.arguments != null) {
+            try {
+              final argsMap =
+                  jsonDecode(tc.function!.arguments!) as Map<String, dynamic>;
+              args.addAll(argsMap);
+            } catch (_) {
+              args['raw'] = tc.function!.arguments;
+            }
+          }
+          parts.add(
+            ToolPart.call(
+              callId: tc.id ?? 'call_${toolCallIdCounter++}',
+              toolName: tc.function?.name ?? 'unknown',
+              arguments: args,
+            ),
+          );
+        }
+        yield ChatResult(
+          output: ChatMessage(role: ChatMessageRole.model, parts: parts),
+        );
+        continue;
+      }
 
       if (delta.content != null && delta.content!.isNotEmpty) {
         buffer.write(delta.content!);
 
         final bufferedContent = buffer.toString();
-        final toolCallPattern = RegExp(
-          r'<tool_call>(.*?)</tool_call>',
-          dotAll: true,
-        );
-        final matches = toolCallPattern.allMatches(bufferedContent);
+
+        final toolCallPatterns = _getToolCallPatterns(format);
+        List<RegExpMatch>? matches;
+
+        for (final pattern in toolCallPatterns) {
+          final found = pattern.allMatches(bufferedContent).toList();
+          if (found.isNotEmpty) {
+            matches = found;
+            break;
+          }
+        }
+
+        matches ??= [];
 
         if (matches.isNotEmpty) {
           int lastEnd = 0;
@@ -114,6 +171,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
             final parsed = _parseToolCall(
               toolCallContent,
               'call_${toolCallIdCounter++}',
+              format,
             );
             parts.add(parsed);
 
@@ -139,15 +197,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           );
         }
       }
-
-      if (delta.thinking != null && delta.thinking!.isNotEmpty) {
-        yield ChatResult(
-          output: ChatMessage(
-            role: ChatMessageRole.model,
-            parts: [ThinkingPart(delta.thinking!)],
-          ),
-        );
-      }
     }
 
     final remainingContent = buffer.toString();
@@ -161,8 +210,178 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     }
   }
 
-  ToolPart _parseToolCall(String content, String callId) {
+  ToolDefinition _convertToolToDefinition(Tool<Object> tool) {
+    final examples = _extractExamples(tool.inputSchema);
+    final fullDescription = examples.isNotEmpty
+        ? '${tool.description}\n\nExamples:\n${examples.map((e) => '- $e').join('\n')}'
+        : tool.description;
+
+    return ToolDefinition(
+      name: tool.name,
+      description: fullDescription,
+      parameters: _convertSchemaToParams(tool.inputSchema),
+      handler: (params) async {
+        return await tool.onCall(params.raw);
+      },
+    );
+  }
+
+  List<String> _extractExamples(Schema? schema) {
+    if (schema == null) return [];
+    final examples = schema['examples'];
+    if (examples is List) {
+      return examples.cast<String>();
+    }
+    return [];
+  }
+
+  List<ToolParam> _convertSchemaToParams(Schema? schema) {
+    if (schema == null) return [];
+
+    final params = <ToolParam>[];
+    final properties = schema['properties'] as Map<String, dynamic>?;
+    final required = schema['required'] as List<dynamic>?;
+
+    if (properties == null) return params;
+
+    for (final entry in properties.entries) {
+      final name = entry.key;
+      final prop = entry.value as Map<String, dynamic>;
+      final isRequired = required?.contains(name) ?? false;
+      final paramType = prop['type'] as String? ?? 'string';
+
+      ToolParam param;
+      if (prop.containsKey('enum')) {
+        final enumValues = (prop['enum'] as List).cast<String>();
+        param = ToolParam.enumType(
+          name,
+          values: enumValues,
+          description: prop['description'] as String?,
+          required: isRequired,
+        );
+      } else {
+        switch (paramType) {
+          case 'integer':
+            param = ToolParam.integer(
+              name,
+              description: prop['description'] as String?,
+              required: isRequired,
+            );
+            break;
+          case 'number':
+            param = ToolParam.number(
+              name,
+              description: prop['description'] as String?,
+              required: isRequired,
+            );
+            break;
+          case 'boolean':
+            param = ToolParam.boolean(
+              name,
+              description: prop['description'] as String?,
+              required: isRequired,
+            );
+            break;
+          case 'array':
+            param = ToolParam.string(
+              name,
+              description: prop['description'] as String?,
+              required: isRequired,
+            );
+            break;
+          default:
+            param = ToolParam.string(
+              name,
+              description: prop['description'] as String?,
+              required: isRequired,
+            );
+        }
+      }
+      params.add(param);
+    }
+
+    return params;
+  }
+
+  List<RegExp> _getToolCallPatterns(ChatFormat format) {
+    final formatStr = format.name;
+
+    if (formatStr.contains('gemma4')) {
+      return [
+        RegExp(r'<\|tool_call>call:(\w+)\{(.*?)}<\|tool_call\|>', dotAll: true),
+      ];
+    }
+
+    switch (format) {
+      case ChatFormat.functionGemma:
+        return [
+          RegExp(
+            r'<start_function_call>(.*?)<end_function_call>',
+            dotAll: true,
+          ),
+        ];
+      case ChatFormat.hermes:
+      case ChatFormat.deepseekV3:
+        return [RegExp(r'<tool_call>(.*?)</tool_call>', dotAll: true)];
+      default:
+        return [
+          RegExp(r'<tool_call>(.*?)</tool_call>', dotAll: true),
+          RegExp(
+            r'<\|tool_call>call:(\w+)\{(.*?)}<\|tool_call\|>',
+            dotAll: true,
+          ),
+        ];
+    }
+  }
+
+  ToolPart _parseToolCall(String content, String callId, ChatFormat format) {
     try {
+      try {
+        final json = jsonDecode(content) as Map<String, dynamic>;
+        final toolName = json.keys.first;
+        final parameters = (json[toolName] as Map<String, dynamic>?) ?? {};
+        return ToolPart.call(
+          callId: callId,
+          toolName: toolName,
+          arguments: parameters,
+        );
+      } catch (_) {}
+
+      final formatStr = format.name;
+      final isGemma4 = formatStr.contains('gemma4');
+
+      if (isGemma4) {
+        final callPattern = RegExp(r'^call:(\w+)\{(.+)\}$');
+        final match = callPattern.firstMatch(content.trim());
+        if (match != null) {
+          final toolName = match.group(1)!;
+          final argsString = match.group(2)!;
+
+          final argsPattern = RegExp(
+            r'(\w+):(?:<\|"\|>([^<]*)<\|"\|>|([^,}]+))',
+          );
+          final arguments = <String, dynamic>{};
+
+          for (final argMatch in argsPattern.allMatches(argsString)) {
+            final key = argMatch.group(1)!;
+            final value =
+                (argMatch.group(2) ?? argMatch.group(3))?.trim() ?? '';
+            final cleanValue = value
+                .replaceAll('<|"|>', '')
+                .replaceAll('"', '')
+                .trim();
+            if (cleanValue.isEmpty) continue;
+            arguments[key] = _castValue(cleanValue);
+          }
+
+          return ToolPart.call(
+            callId: callId,
+            toolName: toolName,
+            arguments: arguments,
+          );
+        }
+      }
+
       final json = jsonDecode(content) as Map<String, dynamic>;
       final toolName = json.keys.first;
       final parameters = (json[toolName] as Map<String, dynamic>?) ?? {};
@@ -180,6 +399,16 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     }
   }
 
+  dynamic _castValue(String v) {
+    if (v == 'true') return true;
+    if (v == 'false') return false;
+    final intVal = int.tryParse(v);
+    if (intVal != null) return intVal;
+    final doubleVal = double.tryParse(v);
+    if (doubleVal != null) return doubleVal;
+    return v;
+  }
+
   @visibleForTesting
   LlamaChatMessage toLlamaMessage(
     ChatMessage msg, {
@@ -188,8 +417,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   }) {
     var parts = msg.parts;
 
-    // FunctionGemma specific: Ensure the developer role activation trigger is present
-    // in system messages for tool use.
     if (format == ChatFormat.functionGemma &&
         msg.role == ChatMessageRole.system &&
         hasTools) {
@@ -197,13 +424,9 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           'You are a model that can do function calling with the following functions';
       final text = msg.text;
       if (!text.contains(trigger)) {
-        // Prepend trigger to the system message
         if (msg.parts.isNotEmpty && msg.parts.first is TextPart) {
           final first = msg.parts.first as TextPart;
-          parts = [
-            TextPart('$trigger\n\n${first.text}'),
-            ...msg.parts.skip(1),
-          ];
+          parts = [TextPart('$trigger\n\n${first.text}'), ...msg.parts.skip(1)];
         } else {
           parts = [TextPart('$trigger\n\n'), ...msg.parts];
         }

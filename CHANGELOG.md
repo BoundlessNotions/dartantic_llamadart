@@ -1,3 +1,16 @@
+## 0.4.0
+
+- Added tool support with automatic format detection based on model GGUF metadata
+- Added `preferredBackend` and `minP` options to `LlamadartChatOptions`
+- Changed default context size to 8192 (was 2048)
+- Changed default GPU layers to maxGpuLayers (was 0)
+- Added tool schema examples extraction and injection into tool descriptions
+- Added multi-format tool call pattern matching:
+  - Gemma 4: `<|tool_call>call:name{...}<|tool_call|>`
+  - FunctionGemma: `<start_function_call>...<end_function_call>`
+  - Hermes/DeepSeek: `<tool_call>...</tool_call>`
+- Added automatic value casting (bool/int/double) for tool arguments
+
 ## 0.3.0
 
 - Upgraded to `dartantic_interface 4.0.0`
