@@ -27,6 +27,18 @@ class LlamadartChatOptions extends ChatModelOptions {
   /// Minimum probability for nucleus sampling.
   final double? minP;
 
+  /// Maximum number of tokens to generate.
+  final int? maxTokens;
+
+  /// Stream batch token threshold for native backends.
+  final int? streamBatchTokenThreshold;
+
+  /// Stream batch byte threshold for native backends.
+  final int? streamBatchByteThreshold;
+
+  /// Reuse prompt prefix for multi-turn chat optimization.
+  final bool? reusePromptPrefix;
+
   const LlamadartChatOptions({
     this.nCtx,
     this.nGpuLayers,
@@ -36,6 +48,10 @@ class LlamadartChatOptions extends ChatModelOptions {
     this.topP,
     this.repeatPenalty,
     this.minP,
+    this.maxTokens,
+    this.streamBatchTokenThreshold,
+    this.streamBatchByteThreshold,
+    this.reusePromptPrefix,
   });
 
   LlamadartChatOptions copyWith({
@@ -47,6 +63,10 @@ class LlamadartChatOptions extends ChatModelOptions {
     double? topP,
     double? repeatPenalty,
     double? minP,
+    int? maxTokens,
+    int? streamBatchTokenThreshold,
+    int? streamBatchByteThreshold,
+    bool? reusePromptPrefix,
   }) {
     return LlamadartChatOptions(
       nCtx: nCtx ?? this.nCtx,
@@ -57,6 +77,12 @@ class LlamadartChatOptions extends ChatModelOptions {
       topP: topP ?? this.topP,
       repeatPenalty: repeatPenalty ?? this.repeatPenalty,
       minP: minP ?? this.minP,
+      maxTokens: maxTokens ?? this.maxTokens,
+      streamBatchTokenThreshold:
+          streamBatchTokenThreshold ?? this.streamBatchTokenThreshold,
+      streamBatchByteThreshold:
+          streamBatchByteThreshold ?? this.streamBatchByteThreshold,
+      reusePromptPrefix: reusePromptPrefix ?? this.reusePromptPrefix,
     );
   }
 }

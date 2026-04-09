@@ -1,6 +1,6 @@
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
-import 'package:dartantic_llamadart/src/llamadart_chat_model.dart';
+
 import 'package:llamadart/llamadart.dart';
 import 'package:test/test.dart';
 

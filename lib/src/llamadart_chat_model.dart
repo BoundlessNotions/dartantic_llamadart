@@ -9,7 +9,7 @@ import 'llamadart_provider.dart';
 
 class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   final LlamadartProvider provider;
-  @override
+  // ignore: overridden_fields, annotate_overrides
   final List<Tool<Object>>? tools;
 
   LlamaEngine? _engine;
@@ -92,6 +92,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         topP: effectiveOptions.topP ?? 0.9,
         penalty: effectiveOptions.repeatPenalty ?? 1.1,
         minP: effectiveOptions.minP ?? 0.05,
+        maxTokens: effectiveOptions.maxTokens ?? 0,
       ),
       tools: llamadartTools,
       toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
