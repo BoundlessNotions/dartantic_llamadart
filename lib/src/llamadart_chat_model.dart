@@ -34,6 +34,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         contextSize: defaultOptions.nCtx ?? 8192,
         gpuLayers: defaultOptions.nGpuLayers ?? ModelParams.maxGpuLayers,
         preferredBackend: defaultOptions.preferredBackend,
+        liteRtLmBackend: defaultOptions.liteRtLmBackend,
+        chatTemplate: defaultOptions.chatTemplate,
       ),
     );
 

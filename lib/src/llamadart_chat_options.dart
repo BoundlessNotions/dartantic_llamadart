@@ -9,8 +9,20 @@ class LlamadartChatOptions extends ChatModelOptions {
   /// The number of layers to offload to the GPU.
   final int? nGpuLayers;
 
-  /// The preferred GPU backend.
+  /// The preferred GPU backend (for GGUF/llama.cpp models).
   final GpuBackend preferredBackend;
+
+  /// The preferred LiteRT-LM runtime backend (for .litertlm models).
+  ///
+  /// Defaults to [LiteRtLmBackendPreference.auto], which selects GPU on
+  /// Android/macOS and CPU elsewhere.
+  final LiteRtLmBackendPreference liteRtLmBackend;
+
+  /// Override the chat template detected from the model file.
+  ///
+  /// Useful when the model does not embed a recognisable chat template or when
+  /// you want to force a specific format (e.g. `'gemma'`).
+  final String? chatTemplate;
 
   /// The temperature for sampling.
   final double? temp;
@@ -43,6 +55,8 @@ class LlamadartChatOptions extends ChatModelOptions {
     this.nCtx,
     this.nGpuLayers,
     this.preferredBackend = GpuBackend.auto,
+    this.liteRtLmBackend = LiteRtLmBackendPreference.auto,
+    this.chatTemplate,
     this.temp,
     this.topK,
     this.topP,
@@ -58,6 +72,9 @@ class LlamadartChatOptions extends ChatModelOptions {
     int? nCtx,
     int? nGpuLayers,
     GpuBackend? preferredBackend,
+    LiteRtLmBackendPreference? liteRtLmBackend,
+    String? chatTemplate,
+    bool clearChatTemplate = false,
     double? temp,
     int? topK,
     double? topP,
@@ -72,6 +89,8 @@ class LlamadartChatOptions extends ChatModelOptions {
       nCtx: nCtx ?? this.nCtx,
       nGpuLayers: nGpuLayers ?? this.nGpuLayers,
       preferredBackend: preferredBackend ?? this.preferredBackend,
+      liteRtLmBackend: liteRtLmBackend ?? this.liteRtLmBackend,
+      chatTemplate: clearChatTemplate ? null : (chatTemplate ?? this.chatTemplate),
       temp: temp ?? this.temp,
       topK: topK ?? this.topK,
       topP: topP ?? this.topP,

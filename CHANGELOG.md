@@ -1,3 +1,12 @@
+## 0.5.0
+
+- Upgraded `llamadart` dependency to `^0.7.0` for LiteRT-LM support
+- Added `liteRtLmBackend` (`LiteRtLmBackendPreference`) to `LlamadartChatOptions` for
+  selecting CPU/GPU/NPU on `.litertlm` models (default: `auto`)
+- Added `chatTemplate` (`String?`) to `LlamadartChatOptions` to override detected
+  chat template for models without embedded metadata
+- Both new fields are forwarded to `ModelParams` when loading a model
+
 ## 0.4.0
 
 - Added tool support with automatic format detection based on model GGUF metadata
