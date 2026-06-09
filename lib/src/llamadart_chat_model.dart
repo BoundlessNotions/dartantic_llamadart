@@ -42,6 +42,22 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     _session = ChatSession(_engine!);
   }
 
+  /// Tears down the engine/session so the next call rebuilds a clean one.
+  ///
+  /// The native LiteRT-LM runtime can leave the engine in a corrupted state
+  /// after a failed generation; reusing it then crashes (SIGSEGV) on a worker
+  /// thread. Disposing here converts that fatal native crash into a recoverable
+  /// per-call error.
+  Future<void> _resetEngine() async {
+    try {
+      _engine?.dispose();
+    } catch (_) {
+      // Best effort — the engine may already be in a bad state.
+    }
+    _engine = null;
+    _session = null;
+  }
+
   Future<ChatFormat> _getChatFormat() async {
     await _ensureInitialized();
     final metadata = await _engine!.getMetadata();
@@ -117,124 +133,131 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // bundles while GGUF keeps the full sampler controls.
     final isLiteRtLm = provider.modelPath.toLowerCase().endsWith('.litertlm');
 
-    await for (final chunk in _session!.create(
-      contentParts,
-      enableThinking: true,
-      params: buildGenerationParams(effectiveOptions, isLiteRtLm: isLiteRtLm),
-      tools: llamadartTools,
-      toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
-          ? ToolChoice.auto
-          : null,
-    )) {
-      final delta = chunk.choices.firstOrNull?.delta;
-      if (delta == null) continue;
+    try {
+      await for (final chunk in _session!.create(
+        contentParts,
+        enableThinking: true,
+        params: buildGenerationParams(effectiveOptions, isLiteRtLm: isLiteRtLm),
+        tools: llamadartTools,
+        toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
+            ? ToolChoice.auto
+            : null,
+      )) {
+        final delta = chunk.choices.firstOrNull?.delta;
+        if (delta == null) continue;
 
-      if (delta.thinking != null && delta.thinking!.isNotEmpty) {
-        thinkingBuffer.write(delta.thinking!);
-        yield ChatResult(
-          output: ChatMessage(
-            role: ChatMessageRole.model,
-            parts: [ThinkingPart(delta.thinking!)],
-          ),
-        );
-      }
-
-      if (delta.toolCalls != null && delta.toolCalls!.isNotEmpty) {
-        final parts = <Part>[];
-        for (final tc in delta.toolCalls!) {
-          final args = <String, dynamic>{};
-          if (tc.function?.arguments != null) {
-            try {
-              final argsMap =
-                  jsonDecode(tc.function!.arguments!) as Map<String, dynamic>;
-              args.addAll(argsMap);
-            } catch (_) {
-              args['raw'] = tc.function!.arguments;
-            }
-          }
-          parts.add(
-            ToolPart.call(
-              callId: tc.id ?? 'call_${toolCallIdCounter++}',
-              toolName: tc.function?.name ?? 'unknown',
-              arguments: args,
-            ),
-          );
-        }
-        yield ChatResult(
-          output: ChatMessage(role: ChatMessageRole.model, parts: parts),
-        );
-        continue;
-      }
-
-      if (delta.content != null && delta.content!.isNotEmpty) {
-        buffer.write(delta.content!);
-
-        final bufferedContent = buffer.toString();
-
-        final toolCallPatterns = _getToolCallPatterns(format);
-        List<RegExpMatch>? matches;
-
-        for (final pattern in toolCallPatterns) {
-          final found = pattern.allMatches(bufferedContent).toList();
-          if (found.isNotEmpty) {
-            matches = found;
-            break;
-          }
-        }
-
-        matches ??= [];
-
-        if (matches.isNotEmpty) {
-          int lastEnd = 0;
-          final parts = <Part>[];
-
-          for (final match in matches) {
-            if (match.start > lastEnd) {
-              parts.add(
-                TextPart(bufferedContent.substring(lastEnd, match.start)),
-              );
-            }
-
-            final toolCallContent = match.group(1)!;
-            final parsed = _parseToolCall(
-              toolCallContent,
-              'call_${toolCallIdCounter++}',
-              format,
-            );
-            parts.add(parsed);
-
-            lastEnd = match.end;
-          }
-
-          if (lastEnd < bufferedContent.length) {
-            buffer.clear();
-            buffer.write(bufferedContent.substring(lastEnd));
-          } else {
-            buffer.clear();
-          }
-
-          yield ChatResult(
-            output: ChatMessage(role: ChatMessageRole.model, parts: parts),
-          );
-        } else {
+        if (delta.thinking != null && delta.thinking!.isNotEmpty) {
+          thinkingBuffer.write(delta.thinking!);
           yield ChatResult(
             output: ChatMessage(
               role: ChatMessageRole.model,
-              parts: [TextPart(delta.content!)],
+              parts: [ThinkingPart(delta.thinking!)],
             ),
           );
         }
-      }
-    }
 
-    final remainingContent = buffer.toString();
-    if (remainingContent.isNotEmpty) {
-      yield ChatResult(
-        output: ChatMessage(
-          role: ChatMessageRole.model,
-          parts: [TextPart(remainingContent)],
-        ),
-      );
+        if (delta.toolCalls != null && delta.toolCalls!.isNotEmpty) {
+          final parts = <Part>[];
+          for (final tc in delta.toolCalls!) {
+            final args = <String, dynamic>{};
+            if (tc.function?.arguments != null) {
+              try {
+                final argsMap =
+                    jsonDecode(tc.function!.arguments!) as Map<String, dynamic>;
+                args.addAll(argsMap);
+              } catch (_) {
+                args['raw'] = tc.function!.arguments;
+              }
+            }
+            parts.add(
+              ToolPart.call(
+                callId: tc.id ?? 'call_${toolCallIdCounter++}',
+                toolName: tc.function?.name ?? 'unknown',
+                arguments: args,
+              ),
+            );
+          }
+          yield ChatResult(
+            output: ChatMessage(role: ChatMessageRole.model, parts: parts),
+          );
+          continue;
+        }
+
+        if (delta.content != null && delta.content!.isNotEmpty) {
+          buffer.write(delta.content!);
+
+          final bufferedContent = buffer.toString();
+
+          final toolCallPatterns = _getToolCallPatterns(format);
+          List<RegExpMatch>? matches;
+
+          for (final pattern in toolCallPatterns) {
+            final found = pattern.allMatches(bufferedContent).toList();
+            if (found.isNotEmpty) {
+              matches = found;
+              break;
+            }
+          }
+
+          matches ??= [];
+
+          if (matches.isNotEmpty) {
+            int lastEnd = 0;
+            final parts = <Part>[];
+
+            for (final match in matches) {
+              if (match.start > lastEnd) {
+                parts.add(
+                  TextPart(bufferedContent.substring(lastEnd, match.start)),
+                );
+              }
+
+              final toolCallContent = match.group(1)!;
+              final parsed = _parseToolCall(
+                toolCallContent,
+                'call_${toolCallIdCounter++}',
+                format,
+              );
+              parts.add(parsed);
+
+              lastEnd = match.end;
+            }
+
+            if (lastEnd < bufferedContent.length) {
+              buffer.clear();
+              buffer.write(bufferedContent.substring(lastEnd));
+            } else {
+              buffer.clear();
+            }
+
+            yield ChatResult(
+              output: ChatMessage(role: ChatMessageRole.model, parts: parts),
+            );
+          } else {
+            yield ChatResult(
+              output: ChatMessage(
+                role: ChatMessageRole.model,
+                parts: [TextPart(delta.content!)],
+              ),
+            );
+          }
+        }
+      }
+
+      final remainingContent = buffer.toString();
+      if (remainingContent.isNotEmpty) {
+        yield ChatResult(
+          output: ChatMessage(
+            role: ChatMessageRole.model,
+            parts: [TextPart(remainingContent)],
+          ),
+        );
+      }
+    } catch (_) {
+      // A failed native generation can corrupt the engine; reusing it on the
+      // next call segfaults. Rebuild on the next call instead of crashing.
+      await _resetEngine();
+      rethrow;
     }
   }
 

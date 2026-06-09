@@ -1,3 +1,13 @@
+## 0.6.2
+
+- Rebuild the engine after a failed generation instead of reusing it. The
+  native LiteRT-LM runtime can leave the engine in a corrupted state when a
+  generation fails internally (e.g. `send_message` returns null on the
+  function-calling path); reusing it then crashes the process with a SIGSEGV
+  (use-after-free in `Conversation::SendMessage`'s async cleanup). Tearing the
+  engine down on error converts that fatal native crash into a recoverable
+  per-call error.
+
 ## 0.6.1
 
 - Fixed `UnsupportedError` from the LiteRT-LM backend by not sending the
