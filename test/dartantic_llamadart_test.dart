@@ -136,5 +136,35 @@ void main() {
       );
       expect(llamaMsg.content, 'You are a helpful assistant.');
     });
+
+    test('buildGenerationParams drops llama.cpp-only knobs for LiteRT-LM', () {
+      const options = LlamadartChatOptions(
+        temp: 0.3,
+        topK: 20,
+        topP: 0.95,
+        repeatPenalty: 1.15,
+        minP: 0.05,
+        maxTokens: 256,
+        speculativeDecoding: true,
+      );
+
+      final litert = model.buildGenerationParams(options, isLiteRtLm: true);
+      // Supported knobs pass through.
+      expect(litert.temp, 0.3);
+      expect(litert.topK, 20);
+      expect(litert.topP, 0.95);
+      expect(litert.maxTokens, 256);
+      expect(litert.speculativeDecoding, isTrue);
+      // llama.cpp-only knobs are forced to GenerationParams defaults so the
+      // LiteRT-LM backend does not reject the request.
+      const defaults = GenerationParams();
+      expect(litert.minP, defaults.minP);
+      expect(litert.penalty, defaults.penalty);
+
+      // GGUF/llama.cpp keeps the caller's values.
+      final gguf = model.buildGenerationParams(options, isLiteRtLm: false);
+      expect(gguf.minP, 0.05);
+      expect(gguf.penalty, 1.15);
+    });
   });
 }

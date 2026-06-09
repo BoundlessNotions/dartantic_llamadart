@@ -1,3 +1,11 @@
+## 0.6.1
+
+- Fixed `UnsupportedError` from the LiteRT-LM backend by not sending the
+  llama.cpp-only generation knobs (`minP`, `penalty`) for `.litertlm` models.
+  These now stay at `GenerationParams` defaults for LiteRT-LM (which rejects
+  non-default values) while GGUF/llama.cpp keeps the full sampler controls.
+  Extracted the logic into `buildGenerationParams` (`@visibleForTesting`).
+
 ## 0.6.0
 
 - Added `speculativeDecoding` (`bool?`) to `LlamadartChatOptions` and forwarded it

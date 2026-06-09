@@ -49,6 +49,32 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     return ChatTemplateEngine.detectFormat(template);
   }
 
+  /// Builds [GenerationParams] from [options], honoring backend capabilities.
+  ///
+  /// The LiteRT-LM backend only supports a subset of sampling controls and
+  /// throws on llama.cpp-specific knobs (`minP`, `penalty`) whose values differ
+  /// from the [GenerationParams] defaults. When [isLiteRtLm] is true those
+  /// fields are left at their defaults so the runtime accepts the request;
+  /// GGUF/llama.cpp receives the full set.
+  @visibleForTesting
+  GenerationParams buildGenerationParams(
+    LlamadartChatOptions options, {
+    required bool isLiteRtLm,
+  }) {
+    const genDefaults = GenerationParams();
+    return GenerationParams(
+      temp: options.temp ?? 0.8,
+      topK: options.topK ?? 40,
+      topP: options.topP ?? 0.9,
+      penalty: isLiteRtLm
+          ? genDefaults.penalty
+          : (options.repeatPenalty ?? 1.1),
+      minP: isLiteRtLm ? genDefaults.minP : (options.minP ?? 0.05),
+      maxTokens: options.maxTokens ?? 0,
+      speculativeDecoding: options.speculativeDecoding ?? false,
+    );
+  }
+
   @override
   Stream<ChatResult<ChatMessage>> sendStream(
     List<ChatMessage> messages, {
@@ -85,18 +111,16 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         ?.map((t) => _convertToolToDefinition(t))
         .toList();
 
+    // LiteRT-LM rejects llama.cpp-only sampling knobs (minP, penalty) when they
+    // differ from GenerationParams defaults. Route on the model path the same
+    // way llamadart does so those fields stay at their defaults for .litertlm
+    // bundles while GGUF keeps the full sampler controls.
+    final isLiteRtLm = provider.modelPath.toLowerCase().endsWith('.litertlm');
+
     await for (final chunk in _session!.create(
       contentParts,
       enableThinking: true,
-      params: GenerationParams(
-        temp: effectiveOptions.temp ?? 0.8,
-        topK: effectiveOptions.topK ?? 40,
-        topP: effectiveOptions.topP ?? 0.9,
-        penalty: effectiveOptions.repeatPenalty ?? 1.1,
-        minP: effectiveOptions.minP ?? 0.05,
-        maxTokens: effectiveOptions.maxTokens ?? 0,
-        speculativeDecoding: effectiveOptions.speculativeDecoding ?? false,
-      ),
+      params: buildGenerationParams(effectiveOptions, isLiteRtLm: isLiteRtLm),
       tools: llamadartTools,
       toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
           ? ToolChoice.auto
