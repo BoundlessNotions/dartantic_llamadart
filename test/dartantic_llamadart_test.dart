@@ -18,6 +18,16 @@ void main() {
       expect(updated.temp, 0.8);
       expect(updated.nCtx, 512);
     });
+
+    test('speculativeDecoding defaults to null and round-trips', () {
+      const options = LlamadartChatOptions(temp: 0.5);
+      expect(options.speculativeDecoding, isNull);
+
+      final updated = options.copyWith(speculativeDecoding: true);
+      expect(updated.speculativeDecoding, isTrue);
+      // unrelated fields are preserved
+      expect(updated.temp, 0.5);
+    });
   });
 
   group('LlamadartProvider', () {

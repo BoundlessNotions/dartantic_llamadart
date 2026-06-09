@@ -51,6 +51,15 @@ class LlamadartChatOptions extends ChatModelOptions {
   /// Reuse prompt prefix for multi-turn chat optimization.
   final bool? reusePromptPrefix;
 
+  /// Enables backend-native speculative decoding (multi-token prediction)
+  /// when the active backend supports it.
+  ///
+  /// Only the native LiteRT-LM backend currently honors this flag (it requires
+  /// a `.litertlm` bundle that ships MTP draft heads, e.g. the post-MTP Gemma 4
+  /// E2B revision). llama.cpp/GGUF, WebGPU, and LiteRT-LM web reject it, so it
+  /// is a no-op on those paths. Defaults to disabled.
+  final bool? speculativeDecoding;
+
   const LlamadartChatOptions({
     this.nCtx,
     this.nGpuLayers,
@@ -66,6 +75,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     this.streamBatchTokenThreshold,
     this.streamBatchByteThreshold,
     this.reusePromptPrefix,
+    this.speculativeDecoding,
   });
 
   LlamadartChatOptions copyWith({
@@ -84,6 +94,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     int? streamBatchTokenThreshold,
     int? streamBatchByteThreshold,
     bool? reusePromptPrefix,
+    bool? speculativeDecoding,
   }) {
     return LlamadartChatOptions(
       nCtx: nCtx ?? this.nCtx,
@@ -102,6 +113,7 @@ class LlamadartChatOptions extends ChatModelOptions {
       streamBatchByteThreshold:
           streamBatchByteThreshold ?? this.streamBatchByteThreshold,
       reusePromptPrefix: reusePromptPrefix ?? this.reusePromptPrefix,
+      speculativeDecoding: speculativeDecoding ?? this.speculativeDecoding,
     );
   }
 }

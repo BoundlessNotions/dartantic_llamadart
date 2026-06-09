@@ -95,6 +95,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         penalty: effectiveOptions.repeatPenalty ?? 1.1,
         minP: effectiveOptions.minP ?? 0.05,
         maxTokens: effectiveOptions.maxTokens ?? 0,
+        speculativeDecoding: effectiveOptions.speculativeDecoding ?? false,
       ),
       tools: llamadartTools,
       toolChoice: llamadartTools != null && llamadartTools.isNotEmpty

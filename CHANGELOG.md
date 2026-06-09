@@ -1,3 +1,11 @@
+## 0.6.0
+
+- Added `speculativeDecoding` (`bool?`) to `LlamadartChatOptions` and forwarded it
+  to `GenerationParams`, enabling LiteRT-LM multi-token-prediction (MTP) /
+  speculative decoding. Honored only by the native LiteRT-LM backend with a
+  `.litertlm` bundle that ships MTP draft heads (e.g. the post-MTP Gemma 4 E2B
+  revision); a no-op on GGUF/llama.cpp, WebGPU, and LiteRT-LM web. Default off.
+
 ## 0.5.0
 
 - Upgraded `llamadart` dependency to `^0.7.0` for LiteRT-LM support
