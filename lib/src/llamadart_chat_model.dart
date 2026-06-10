@@ -116,7 +116,21 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       );
     }
 
-    final contentParts = _toLlamaContentParts(lastMessage);
+    // Tool result messages use the 'tool' role, not 'user'. Add them as a
+    // session message so the chat template formats them correctly, then call
+    // create([]) to let the model generate its response.
+    final hasToolResult = lastMessage.parts.any(
+      (p) => p is ToolPart && p.kind == ToolPartKind.result,
+    );
+    final List<LlamaContentPart> contentParts;
+    if (hasToolResult) {
+      _session!.addMessage(
+        toLlamaMessage(lastMessage, format: format, hasTools: hasTools),
+      );
+      contentParts = [];
+    } else {
+      contentParts = _toLlamaContentParts(lastMessage);
+    }
 
     final effectiveOptions = options ?? defaultOptions;
     final buffer = StringBuffer();
@@ -489,8 +503,15 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       }
     }
 
+    // Tool result messages must use LlamaChatRole.tool so the chat template
+    // formats them as <start_of_turn>tool rather than <start_of_turn>user.
+    final hasToolResults = parts.any(
+      (p) => p is ToolPart && p.kind == ToolPartKind.result,
+    );
+    final role = hasToolResults ? LlamaChatRole.tool : _toLlamaRole(msg.role);
+
     return LlamaChatMessage.withContent(
-      role: _toLlamaRole(msg.role),
+      role: role,
       content: _toLlamaContentPartsFromList(parts),
     );
   }
@@ -499,6 +520,26 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     return parts.map((part) {
       if (part is TextPart) {
         return LlamaTextContent(part.text);
+      }
+      if (part is ToolPart) {
+        if (part.kind == ToolPartKind.call) {
+          return LlamaToolCallContent(
+            id: part.callId,
+            name: part.toolName,
+            arguments: Map<String, dynamic>.from(part.arguments ?? {}),
+            rawJson: part.argumentsRaw,
+          );
+        } else {
+          final result = part.result;
+          final resultStr = result is Map || result is List
+              ? jsonEncode(result)
+              : result?.toString() ?? '';
+          return LlamaToolResultContent(
+            id: part.callId,
+            name: part.toolName,
+            result: resultStr,
+          );
+        }
       }
       return LlamaTextContent(part.toString());
     }).toList();
