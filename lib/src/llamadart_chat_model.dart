@@ -272,7 +272,12 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       description: fullDescription,
       parameters: _convertSchemaToParams(tool.inputSchema),
       handler: (params) async {
-        return await tool.onCall(params.raw);
+        // If a zone-scoped tool-target map is present (keyed by #toolTargets),
+        // prefer the real handler from that map over the placeholder onCall.
+        final zoneTargets =
+            Zone.current[#toolTargets] as Map<String, Tool<Object>>?;
+        final actualTool = zoneTargets?[tool.name] ?? tool;
+        return await actualTool.onCall(params.raw);
       },
     );
   }
@@ -289,78 +294,78 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   List<ToolParam> _convertSchemaToParams(Schema? schema) {
     if (schema == null) return [];
 
-    final params = <ToolParam>[];
     final properties = schema['properties'] as Map<String, dynamic>?;
     final required = schema['required'] as List<dynamic>?;
+    if (properties == null) return [];
 
-    if (properties == null) return params;
+    return [
+      for (final entry in properties.entries)
+        _schemaPropertyToToolParam(
+          name: entry.key,
+          prop: entry.value as Map<String, dynamic>,
+          isRequired: required?.contains(entry.key) ?? false,
+        ),
+    ];
+  }
 
-    for (final entry in properties.entries) {
-      final name = entry.key;
-      final prop = entry.value as Map<String, dynamic>;
-      final isRequired = required?.contains(name) ?? false;
-      final paramType = prop['type'] as String? ?? 'string';
+  ToolParam _schemaPropertyToToolParam({
+    required String name,
+    required Map<String, dynamic> prop,
+    required bool isRequired,
+  }) {
+    final description = prop['description'] as String?;
 
-      ToolParam param;
-      if (prop.containsKey('enum')) {
-        final enumValues = (prop['enum'] as List).cast<String>();
-        param = ToolParam.enumType(
-          name,
-          values: enumValues,
-          description: prop['description'] as String?,
-          required: isRequired,
-        );
-      } else {
-        switch (paramType) {
-          case 'integer':
-            param = ToolParam.integer(
-              name,
-              description: prop['description'] as String?,
-              required: isRequired,
-            );
-            break;
-          case 'number':
-            param = ToolParam.number(
-              name,
-              description: prop['description'] as String?,
-              required: isRequired,
-            );
-            break;
-          case 'boolean':
-            param = ToolParam.boolean(
-              name,
-              description: prop['description'] as String?,
-              required: isRequired,
-            );
-            break;
-          case 'array':
-            param = ToolParam.string(
-              name,
-              description: prop['description'] as String?,
-              required: isRequired,
-            );
-            break;
-          default:
-            param = ToolParam.string(
-              name,
-              description: prop['description'] as String?,
-              required: isRequired,
-            );
-        }
-      }
-      params.add(param);
+    if (prop.containsKey('enum')) {
+      final enumValues = (prop['enum'] as List).cast<String>();
+      return ToolParam.enumType(
+        name,
+        values: enumValues,
+        description: description,
+        required: isRequired,
+      );
     }
 
-    return params;
+    final paramType = prop['type'] as String? ?? 'string';
+    switch (paramType) {
+      case 'integer':
+        return ToolParam.integer(name, description: description, required: isRequired);
+      case 'number':
+        return ToolParam.number(name, description: description, required: isRequired);
+      case 'boolean':
+        return ToolParam.boolean(name, description: description, required: isRequired);
+      case 'array':
+        final itemSchema = prop['items'] as Map<String, dynamic>?;
+        final itemParam = itemSchema != null
+            ? _schemaPropertyToToolParam(name: 'item', prop: itemSchema, isRequired: false)
+            : ToolParam.string('item');
+        return ToolParam.array(name, itemType: itemParam, description: description, required: isRequired);
+      case 'object':
+        final nestedProps = prop['properties'] as Map<String, dynamic>?;
+        final nestedRequired = prop['required'] as List<dynamic>?;
+        final nestedParams = nestedProps?.entries
+            .map((e) => _schemaPropertyToToolParam(
+                  name: e.key,
+                  prop: e.value as Map<String, dynamic>,
+                  isRequired: nestedRequired?.contains(e.key) ?? false,
+                ))
+            .toList() ?? [];
+        return ToolParam.object(name, properties: nestedParams, description: description, required: isRequired);
+      default:
+        return ToolParam.string(name, description: description, required: isRequired);
+    }
   }
 
   List<RegExp> _getToolCallPatterns(ChatFormat format) {
     final formatStr = format.name;
 
     if (formatStr.contains('gemma4')) {
-      return [
-        RegExp(r'<\|tool_call>call:(\w+)\{(.*?)}<\|tool_call\|>', dotAll: true),
-      ];
+      // Gemma4Handler already extracts tool calls from the full output and
+      // yields them as delta.toolCalls with complete arguments.  Applying a
+      // text regex here too would fire on the raw content chunks BEFORE the
+      // native chunk arrives, capturing only the tool name (group 1 of the
+      // old regex was (\w+), not the full call expression) and creating
+      // spurious `error` tool calls that confuse the agent.
+      return [];
     }
 
     switch (format) {
