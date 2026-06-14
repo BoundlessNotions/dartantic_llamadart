@@ -8,7 +8,7 @@ environment:
 
 dependencies:
   dartantic_interface: ^4.0.0
-  llamadart: ^0.7.0
+  llamadart: '>=0.7.0 <0.9.0'
   meta: ^1.11.0
 
 dev_dependencies:
