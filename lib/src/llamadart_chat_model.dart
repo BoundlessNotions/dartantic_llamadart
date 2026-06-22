@@ -28,6 +28,14 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final backend = LlamaBackend();
     _engine = LlamaEngine(backend);
 
+    // When a GGUF MTP drafter is configured, llama.cpp requires the context to
+    // reserve at least `draftTokenMax` recurrent-state rollback snapshots
+    // (n_rs_seq) — otherwise generation fails with "MTP speculative decoding is
+    // not available for this model/context". Reserve them at load time.
+    final mtpDraft = defaultOptions.mtpDraftModelPath;
+    final ggufMtpOn = mtpDraft != null && mtpDraft.isNotEmpty;
+    final draftTokenMax = defaultOptions.mtpDraftTokenMax ?? 1;
+
     await _engine!.loadModel(
       provider.modelPath,
       modelParams: ModelParams(
@@ -36,6 +44,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         preferredBackend: defaultOptions.preferredBackend,
         liteRtLmBackend: defaultOptions.liteRtLmBackend,
         chatTemplate: defaultOptions.chatTemplate,
+        speculativeRollbackTokenMax: ggufMtpOn ? draftTokenMax : 0,
       ),
     );
 
@@ -96,10 +105,15 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       minP: isLiteRtLm ? genDefaults.minP : (options.minP ?? 0.05),
       maxTokens: options.maxTokens ?? 0,
       // LiteRT-LM honours the legacy bool; GGUF self-MTP also uses it. GGUF with
-      // a separate drafter uses the explicit config below instead.
+      // a separate drafter uses the explicit config below instead. draftTokenMax
+      // must match the rollback snapshots reserved at model load (see
+      // _ensureInitialized).
       speculativeDecoding: useGgufMtp ? false : (options.speculativeDecoding ?? false),
       speculativeDecodingConfig: useGgufMtp
-          ? SpeculativeDecodingConfig.mtp(draftModelPath: mtpDraft)
+          ? SpeculativeDecodingConfig.mtp(
+              draftModelPath: mtpDraft,
+              draftTokenMax: options.mtpDraftTokenMax ?? 1,
+            )
           : null,
     );
   }

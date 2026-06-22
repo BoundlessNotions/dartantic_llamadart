@@ -70,6 +70,14 @@ class LlamadartChatOptions extends ChatModelOptions {
   /// [speculativeDecoding]). Leave null for a self-MTP GGUF.
   final String? mtpDraftModelPath;
 
+  /// Maximum draft tokens proposed per MTP step on the GGUF path (null → 1).
+  ///
+  /// Drives both the generation-time `draftTokenMax` and the model-load-time
+  /// `ModelParams.speculativeRollbackTokenMax` (which llama.cpp requires to be
+  /// >= the draft token max for architectures needing bounded rollback). Only
+  /// relevant when [mtpDraftModelPath] is set.
+  final int? mtpDraftTokenMax;
+
   const LlamadartChatOptions({
     this.nCtx,
     this.nGpuLayers,
@@ -87,6 +95,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     this.reusePromptPrefix,
     this.speculativeDecoding,
     this.mtpDraftModelPath,
+    this.mtpDraftTokenMax,
   });
 
   LlamadartChatOptions copyWith({
@@ -107,6 +116,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     bool? reusePromptPrefix,
     bool? speculativeDecoding,
     String? mtpDraftModelPath,
+    int? mtpDraftTokenMax,
   }) {
     return LlamadartChatOptions(
       nCtx: nCtx ?? this.nCtx,
@@ -127,6 +137,7 @@ class LlamadartChatOptions extends ChatModelOptions {
       reusePromptPrefix: reusePromptPrefix ?? this.reusePromptPrefix,
       speculativeDecoding: speculativeDecoding ?? this.speculativeDecoding,
       mtpDraftModelPath: mtpDraftModelPath ?? this.mtpDraftModelPath,
+      mtpDraftTokenMax: mtpDraftTokenMax ?? this.mtpDraftTokenMax,
     );
   }
 }

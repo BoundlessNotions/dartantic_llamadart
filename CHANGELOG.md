@@ -1,3 +1,13 @@
+## 0.6.7
+
+- Reserve llama.cpp MTP rollback snapshots at model load. GGUF draft-mtp
+  generation failed with "MTP speculative decoding is not available for this
+  model/context" because the context reserved no `n_rs_seq` rollback snapshots.
+  `_ensureInitialized` now sets `ModelParams.speculativeRollbackTokenMax` to the
+  draft token max when a GGUF drafter is configured, and the generation request
+  passes a matching `draftTokenMax`. New `LlamadartChatOptions.mtpDraftTokenMax`
+  (default 1) controls both.
+
 ## 0.6.6
 
 - Route GGUF/llama.cpp multi-token-prediction speculative decoding. Added

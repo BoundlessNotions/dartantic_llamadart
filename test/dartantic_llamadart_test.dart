@@ -184,6 +184,8 @@ void main() {
         gguf.speculativeDecodingConfig!.draftModelPath,
         '/models/mtp-draft.gguf',
       );
+      // Defaults to a draft token max of 1 (must match the reserved rollback).
+      expect(gguf.speculativeDecodingConfig!.draftTokenMax, 1);
       // The explicit config supersedes the legacy bool on the GGUF path.
       expect(gguf.speculativeDecoding, isFalse);
 
