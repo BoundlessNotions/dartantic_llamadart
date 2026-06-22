@@ -51,14 +51,24 @@ class LlamadartChatOptions extends ChatModelOptions {
   /// Reuse prompt prefix for multi-turn chat optimization.
   final bool? reusePromptPrefix;
 
-  /// Enables backend-native speculative decoding (multi-token prediction)
-  /// when the active backend supports it.
+  /// Enables backend-native speculative decoding (multi-token prediction).
   ///
-  /// Only the native LiteRT-LM backend currently honors this flag (it requires
-  /// a `.litertlm` bundle that ships MTP draft heads, e.g. the post-MTP Gemma 4
-  /// E2B revision). llama.cpp/GGUF, WebGPU, and LiteRT-LM web reject it, so it
-  /// is a no-op on those paths. Defaults to disabled.
+  /// On the LiteRT-LM backend this requires a `.litertlm` bundle that ships MTP
+  /// draft heads (e.g. the post-MTP Gemma 4 E2B revision). On llama.cpp/GGUF it
+  /// enables the backend-default speculative path for a model that carries its
+  /// own MTP layers; to drive GGUF speculation with a *separate* drafter model,
+  /// set [mtpDraftModelPath] instead. WebGPU and LiteRT-LM web reject it.
+  /// Defaults to disabled.
   final bool? speculativeDecoding;
+
+  /// Path to a separate MTP draft model for llama.cpp/GGUF speculative decoding
+  /// (the `draft-mtp` path, equivalent to llama.cpp `--model-draft`).
+  ///
+  /// When set on a GGUF model, multi-token-prediction speculative decoding is
+  /// enabled using this drafter. Ignored on the LiteRT-LM backend (which carries
+  /// its MTP heads inside the `.litertlm` bundle and is driven by
+  /// [speculativeDecoding]). Leave null for a self-MTP GGUF.
+  final String? mtpDraftModelPath;
 
   const LlamadartChatOptions({
     this.nCtx,
@@ -76,6 +86,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     this.streamBatchByteThreshold,
     this.reusePromptPrefix,
     this.speculativeDecoding,
+    this.mtpDraftModelPath,
   });
 
   LlamadartChatOptions copyWith({
@@ -95,6 +106,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     int? streamBatchByteThreshold,
     bool? reusePromptPrefix,
     bool? speculativeDecoding,
+    String? mtpDraftModelPath,
   }) {
     return LlamadartChatOptions(
       nCtx: nCtx ?? this.nCtx,
@@ -114,6 +126,7 @@ class LlamadartChatOptions extends ChatModelOptions {
           streamBatchByteThreshold ?? this.streamBatchByteThreshold,
       reusePromptPrefix: reusePromptPrefix ?? this.reusePromptPrefix,
       speculativeDecoding: speculativeDecoding ?? this.speculativeDecoding,
+      mtpDraftModelPath: mtpDraftModelPath ?? this.mtpDraftModelPath,
     );
   }
 }

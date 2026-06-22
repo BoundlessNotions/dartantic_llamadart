@@ -78,6 +78,14 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     required bool isLiteRtLm,
   }) {
     const genDefaults = GenerationParams();
+
+    // On llama.cpp/GGUF, a non-empty MTP draft path enables draft-mtp
+    // speculative decoding via a separate drafter; the LiteRT-LM backend instead
+    // carries its MTP heads in the bundle and is driven by the legacy bool.
+    final mtpDraft = options.mtpDraftModelPath;
+    final useGgufMtp =
+        !isLiteRtLm && mtpDraft != null && mtpDraft.isNotEmpty;
+
     return GenerationParams(
       temp: options.temp ?? 0.8,
       topK: options.topK ?? 40,
@@ -87,7 +95,12 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           : (options.repeatPenalty ?? 1.1),
       minP: isLiteRtLm ? genDefaults.minP : (options.minP ?? 0.05),
       maxTokens: options.maxTokens ?? 0,
-      speculativeDecoding: options.speculativeDecoding ?? false,
+      // LiteRT-LM honours the legacy bool; GGUF self-MTP also uses it. GGUF with
+      // a separate drafter uses the explicit config below instead.
+      speculativeDecoding: useGgufMtp ? false : (options.speculativeDecoding ?? false),
+      speculativeDecodingConfig: useGgufMtp
+          ? SpeculativeDecodingConfig.mtp(draftModelPath: mtpDraft)
+          : null,
     );
   }
 

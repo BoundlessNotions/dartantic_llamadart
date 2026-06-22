@@ -1,3 +1,13 @@
+## 0.6.6
+
+- Route GGUF/llama.cpp multi-token-prediction speculative decoding. Added
+  `LlamadartChatOptions.mtpDraftModelPath`; when set on a GGUF model,
+  `buildGenerationParams` emits `SpeculativeDecodingConfig.mtp(draftModelPath:)`
+  so llama.cpp runs its `draft-mtp` path with a separate drafter. The LiteRT-LM
+  backend continues to use the `speculativeDecoding` flag (its MTP heads ship in
+  the `.litertlm` bundle) and ignores the GGUF draft path.
+- Requires `llamadart >=0.8.4` for the `SpeculativeDecodingConfig` API.
+
 ## 0.6.2
 
 - Rebuild the engine after a failed generation instead of reusing it. The

@@ -166,5 +166,30 @@ void main() {
       expect(gguf.minP, 0.05);
       expect(gguf.penalty, 1.15);
     });
+
+    test('buildGenerationParams maps an MTP draft path to a GGUF spec config', () {
+      const options = LlamadartChatOptions(
+        maxTokens: 128,
+        mtpDraftModelPath: '/models/mtp-draft.gguf',
+      );
+
+      // GGUF: the draft path produces an explicit draft-mtp speculative config.
+      final gguf = model.buildGenerationParams(options, isLiteRtLm: false);
+      expect(gguf.speculativeDecodingConfig, isNotNull);
+      expect(
+        gguf.speculativeDecodingConfig!.strategy,
+        SpeculativeDecodingStrategy.mtp,
+      );
+      expect(
+        gguf.speculativeDecodingConfig!.draftModelPath,
+        '/models/mtp-draft.gguf',
+      );
+      // The explicit config supersedes the legacy bool on the GGUF path.
+      expect(gguf.speculativeDecoding, isFalse);
+
+      // LiteRT-LM ignores the GGUF draft path entirely.
+      final litert = model.buildGenerationParams(options, isLiteRtLm: true);
+      expect(litert.speculativeDecodingConfig, isNull);
+    });
   });
 }
