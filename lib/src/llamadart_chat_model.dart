@@ -4,6 +4,7 @@ import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:llamadart/llamadart.dart';
 import 'package:meta/meta.dart';
 
+import 'llama_engine_cache.dart';
 import 'llamadart_chat_options.dart';
 import 'llamadart_provider.dart';
 
@@ -14,6 +15,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
 
   LlamaEngine? _engine;
   ChatSession? _session;
+  String? _engineCacheKey;
 
   LlamadartChatModel({
     required this.provider,
@@ -25,9 +27,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   Future<void> _ensureInitialized() async {
     if (_engine != null) return;
 
-    final backend = LlamaBackend();
-    _engine = LlamaEngine(backend);
-
     // When a GGUF MTP drafter is configured, llama.cpp requires the context to
     // reserve at least `draftTokenMax` recurrent-state rollback snapshots
     // (n_rs_seq) — otherwise generation fails with "MTP speculative decoding is
@@ -36,35 +35,40 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final ggufMtpOn = mtpDraft != null && mtpDraft.isNotEmpty;
     final draftTokenMax = defaultOptions.mtpDraftTokenMax ?? 1;
 
-    await _engine!.loadModel(
-      provider.modelPath,
-      modelParams: ModelParams(
-        contextSize: defaultOptions.nCtx ?? 8192,
-        gpuLayers: defaultOptions.nGpuLayers ?? ModelParams.maxGpuLayers,
-        preferredBackend: defaultOptions.preferredBackend,
-        liteRtLmBackend: defaultOptions.liteRtLmBackend,
-        chatTemplate: defaultOptions.chatTemplate,
-        speculativeRollbackTokenMax: ggufMtpOn ? draftTokenMax : 0,
-      ),
+    final params = ModelParams(
+      contextSize: defaultOptions.nCtx ?? 8192,
+      gpuLayers: defaultOptions.nGpuLayers ?? ModelParams.maxGpuLayers,
+      preferredBackend: defaultOptions.preferredBackend,
+      liteRtLmBackend: defaultOptions.liteRtLmBackend,
+      chatTemplate: defaultOptions.chatTemplate,
+      speculativeRollbackTokenMax: ggufMtpOn ? draftTokenMax : 0,
     );
 
+    // Engines are cached process-wide: model load (weights + graph compile +
+    // context allocation) is paid once per (path, params), not per chat model.
+    // Sessions stay per-model — they are cheap Dart-side history wrappers.
+    _engineCacheKey = LlamaEngineCache.keyFor(provider.modelPath, params);
+    _engine = await LlamaEngineCache.instance.acquire(
+      provider.modelPath,
+      params,
+    );
     _session = ChatSession(_engine!);
   }
 
-  /// Tears down the engine/session so the next call rebuilds a clean one.
+  /// Evicts the shared engine so the next call reloads a clean one.
   ///
-  /// The native LiteRT-LM runtime can leave the engine in a corrupted state
-  /// after a failed generation; reusing it then crashes (SIGSEGV) on a worker
-  /// thread. Disposing here converts that fatal native crash into a recoverable
+  /// The native runtime can be left in a corrupted state after a failed
+  /// generation; reusing it then crashes (SIGSEGV) on a worker thread.
+  /// Evicting here converts that fatal native crash into a recoverable
   /// per-call error.
   Future<void> _resetEngine() async {
-    try {
-      _engine?.dispose();
-    } catch (_) {
-      // Best effort — the engine may already be in a bad state.
+    final key = _engineCacheKey;
+    if (key != null) {
+      await LlamaEngineCache.instance.evict(key);
     }
     _engine = null;
     _session = null;
+    _engineCacheKey = null;
   }
 
   Future<ChatFormat> _getChatFormat() async {
@@ -125,6 +129,13 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     Schema? outputSchema,
   }) async* {
     await _ensureInitialized();
+
+    // The engine is shared across chat models. A caller that timed out on a
+    // previous call cannot cancel the underlying native generation via
+    // `.timeout` — it keeps running. Interrupt it here so this call doesn't
+    // race (or queue behind) an abandoned zombie generation. Safe when idle:
+    // the cancel token is per-generation and null between runs.
+    _engine!.cancelGeneration();
 
     final format = await _getChatFormat();
     final hasTools =
@@ -589,6 +600,10 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
 
   @override
   void dispose() {
-    _engine?.dispose();
+    // The engine is owned by LlamaEngineCache and shared across models — do
+    // not dispose it here. Use LlamaEngineCache.instance.disposeAll() at app
+    // shutdown to release native resources.
+    _engine = null;
+    _session = null;
   }
 }

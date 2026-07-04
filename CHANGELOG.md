@@ -1,3 +1,18 @@
+## 0.6.8
+
+- Cache loaded engines process-wide (`LlamaEngineCache`), keyed by model path
+  plus load-time params. Previously every `LlamadartChatModel` owned its own
+  `LlamaEngine`, so fresh-model-per-call orchestrators paid a full model load
+  (weights + graph compile + context allocation) on every request and leaked
+  the previous engine's native handles. Sessions remain per-model.
+- `sendStream` calls `cancelGeneration()` before generating: a caller that
+  timed out on a previous call cannot cancel the native generation via
+  `.timeout`, and with a shared engine the zombie must be interrupted instead
+  of raced. Safe when idle (the cancel token is per-generation).
+- `LlamadartChatModel.dispose()` no longer disposes the (shared) engine; call
+  `LlamaEngineCache.instance.disposeAll()` at app shutdown. Corruption
+  recovery (`_resetEngine`) evicts from the cache so the next call reloads.
+
 ## 0.6.7
 
 - Reserve llama.cpp MTP rollback snapshots at model load. GGUF draft-mtp
