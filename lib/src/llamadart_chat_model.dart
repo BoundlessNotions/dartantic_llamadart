@@ -2,6 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:llamadart/llamadart.dart';
+// Not exported from llamadart's public barrel; the exact version pin in
+// pubspec makes the src import stable. TODO(llamadart): ask upstream to
+// export JsonSchemaConverter.
+// ignore: implementation_imports
+import 'package:llamadart/src/core/grammar/json_schema_converter.dart';
 import 'package:meta/meta.dart';
 
 import 'llama_engine_cache.dart';
@@ -78,17 +83,34 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     return ChatTemplateEngine.detectFormat(template);
   }
 
+  /// Converts a dartantic [Schema] into a GBNF grammar for constrained
+  /// decoding, or null when the schema can't be converted or the backend
+  /// (LiteRT-LM) doesn't support grammar constraints.
+  @visibleForTesting
+  static String? grammarForSchema(Schema? schema, {required bool isLiteRtLm}) {
+    if (schema == null || isLiteRtLm) return null;
+    try {
+      final map = jsonDecode(schema.toJson()) as Map<String, dynamic>;
+      return JsonSchemaConverter.convert(map);
+    } catch (_) {
+      // Unconvertible schema — generate unconstrained rather than fail.
+      return null;
+    }
+  }
+
   /// Builds [GenerationParams] from [options], honoring backend capabilities.
   ///
   /// The LiteRT-LM backend only supports a subset of sampling controls and
   /// throws on llama.cpp-specific knobs (`minP`, `penalty`) whose values differ
   /// from the [GenerationParams] defaults. When [isLiteRtLm] is true those
   /// fields are left at their defaults so the runtime accepts the request;
-  /// GGUF/llama.cpp receives the full set.
+  /// GGUF/llama.cpp receives the full set. [grammar] (from [grammarForSchema])
+  /// constrains decoding to schema-shaped output on grammar-capable backends.
   @visibleForTesting
   GenerationParams buildGenerationParams(
     LlamadartChatOptions options, {
     required bool isLiteRtLm,
+    String? grammar,
   }) {
     const genDefaults = GenerationParams();
 
@@ -100,6 +122,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         !isLiteRtLm && mtpDraft != null && mtpDraft.isNotEmpty;
 
     return GenerationParams(
+      grammar: grammar,
       temp: options.temp ?? 0.8,
       topK: options.topK ?? 40,
       topP: options.topP ?? 0.9,
@@ -185,11 +208,21 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // bundles while GGUF keeps the full sampler controls.
     final isLiteRtLm = provider.modelPath.toLowerCase().endsWith('.litertlm');
 
+    // Structured output: constrain decoding to the caller's schema via GBNF
+    // grammar sampling (llama.cpp). Template-generated tool-call grammars take
+    // precedence inside the engine, so this applies when the caller wants raw
+    // schema-shaped JSON rather than a tool call.
+    final grammar = grammarForSchema(outputSchema, isLiteRtLm: isLiteRtLm);
+
     try {
       await for (final chunk in _session!.create(
         contentParts,
         enableThinking: true,
-        params: buildGenerationParams(effectiveOptions, isLiteRtLm: isLiteRtLm),
+        params: buildGenerationParams(
+          effectiveOptions,
+          isLiteRtLm: isLiteRtLm,
+          grammar: grammar,
+        ),
         tools: llamadartTools,
         toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
             ? ToolChoice.auto

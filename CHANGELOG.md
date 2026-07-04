@@ -1,5 +1,11 @@
 ## 0.6.8
 
+- Honor `outputSchema` in `sendStream`: on grammar-capable backends
+  (llama.cpp/GGUF) the schema is converted to a GBNF grammar
+  (`grammarForSchema`) and passed via `GenerationParams.grammar`, so
+  structured output is enforced at the sampler instead of hoped for.
+  LiteRT-LM (no grammar support) generates unconstrained as before.
+
 - Cache loaded engines process-wide (`LlamaEngineCache`), keyed by model path
   plus load-time params. Previously every `LlamadartChatModel` owned its own
   `LlamaEngine`, so fresh-model-per-call orchestrators paid a full model load
