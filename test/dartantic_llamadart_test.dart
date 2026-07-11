@@ -137,6 +137,40 @@ void main() {
       expect(llamaMsg.content, 'You are a helpful assistant.');
     });
 
+    test('prepareMessages preserves system instructions separately', () {
+      final prepared = LlamadartChatModel.prepareMessages([
+        ChatMessage.system('  First system instruction.  '),
+        ChatMessage.user('Hello'),
+        ChatMessage.model('Hi'),
+        ChatMessage.system('Second system instruction.'),
+        ChatMessage.user('Continue'),
+      ]);
+
+      expect(
+        prepared.systemPrompt,
+        'First system instruction.\n\nSecond system instruction.',
+      );
+      expect(prepared.conversation.map((message) => message.role), [
+        ChatMessageRole.user,
+        ChatMessageRole.model,
+        ChatMessageRole.user,
+      ]);
+      expect(prepared.conversation.map((message) => message.text), [
+        'Hello',
+        'Hi',
+        'Continue',
+      ]);
+    });
+
+    test('prepareMessages clears a previous prompt when none is supplied', () {
+      final prepared = LlamadartChatModel.prepareMessages([
+        ChatMessage.user('Hello'),
+      ]);
+
+      expect(prepared.systemPrompt, isNull);
+      expect(prepared.conversation.single.text, 'Hello');
+    });
+
     test('buildGenerationParams drops llama.cpp-only knobs for LiteRT-LM', () {
       const options = LlamadartChatOptions(
         temp: 0.3,
