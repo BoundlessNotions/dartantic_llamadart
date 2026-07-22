@@ -1,5 +1,5 @@
 /// Local GGUF model support for Dartantic AI using llamadart.
-library dartantic_llamadart;
+library;
 
 export 'src/llama_engine_cache.dart';
 export 'src/llamadart_chat_options.dart';

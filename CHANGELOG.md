@@ -1,3 +1,14 @@
+## 0.6.9
+
+- Upgraded dependencies: `llamadart` to `0.8.17` (was `0.8.4`), `dartantic_interface`
+  to `4.0.1`, `meta` to `1.19.0`, and `lints` to `^6.1.0`. No API changes on
+  our side — `llamadart`'s `0.8.x` releases through `0.8.17` only touched
+  native runtime pins, chat-template/tool-call coverage, and the runnable
+  sample apps.
+- Removed the deprecated `library dartantic_llamadart;` name per the updated
+  `lints` recommended set (`unnecessary_library_name`) and reformatted with
+  the current `dart format`.
+
 ## 0.6.8
 
 - Honor `outputSchema` in `sendStream`: on grammar-capable backends

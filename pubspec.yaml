@@ -1,6 +1,6 @@
 name: dartantic_llamadart
 description: Local GGUF and LiteRT-LM model support for Dartantic AI using llamadart.
-version: 0.6.8
+version: 0.6.9
 repository: https://github.com/BoundlessNotions/dartantic_llamadart
 
 environment:
@@ -12,5 +12,5 @@ dependencies:
   meta: ^1.11.0
 
 dev_dependencies:
-  lints: ^3.0.0
+  lints: ^6.1.0
   test: ^1.24.0

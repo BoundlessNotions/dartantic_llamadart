@@ -118,8 +118,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // speculative decoding via a separate drafter; the LiteRT-LM backend instead
     // carries its MTP heads in the bundle and is driven by the legacy bool.
     final mtpDraft = options.mtpDraftModelPath;
-    final useGgufMtp =
-        !isLiteRtLm && mtpDraft != null && mtpDraft.isNotEmpty;
+    final useGgufMtp = !isLiteRtLm && mtpDraft != null && mtpDraft.isNotEmpty;
 
     return GenerationParams(
       grammar: grammar,
@@ -135,7 +134,9 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       // a separate drafter uses the explicit config below instead. draftTokenMax
       // must match the rollback snapshots reserved at model load (see
       // _ensureInitialized).
-      speculativeDecoding: useGgufMtp ? false : (options.speculativeDecoding ?? false),
+      speculativeDecoding: useGgufMtp
+          ? false
+          : (options.speculativeDecoding ?? false),
       speculativeDecodingConfig: useGgufMtp
           ? SpeculativeDecodingConfig.mtp(
               draftModelPath: mtpDraft,
@@ -413,30 +414,64 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final paramType = prop['type'] as String? ?? 'string';
     switch (paramType) {
       case 'integer':
-        return ToolParam.integer(name, description: description, required: isRequired);
+        return ToolParam.integer(
+          name,
+          description: description,
+          required: isRequired,
+        );
       case 'number':
-        return ToolParam.number(name, description: description, required: isRequired);
+        return ToolParam.number(
+          name,
+          description: description,
+          required: isRequired,
+        );
       case 'boolean':
-        return ToolParam.boolean(name, description: description, required: isRequired);
+        return ToolParam.boolean(
+          name,
+          description: description,
+          required: isRequired,
+        );
       case 'array':
         final itemSchema = prop['items'] as Map<String, dynamic>?;
         final itemParam = itemSchema != null
-            ? _schemaPropertyToToolParam(name: 'item', prop: itemSchema, isRequired: false)
+            ? _schemaPropertyToToolParam(
+                name: 'item',
+                prop: itemSchema,
+                isRequired: false,
+              )
             : ToolParam.string('item');
-        return ToolParam.array(name, itemType: itemParam, description: description, required: isRequired);
+        return ToolParam.array(
+          name,
+          itemType: itemParam,
+          description: description,
+          required: isRequired,
+        );
       case 'object':
         final nestedProps = prop['properties'] as Map<String, dynamic>?;
         final nestedRequired = prop['required'] as List<dynamic>?;
-        final nestedParams = nestedProps?.entries
-            .map((e) => _schemaPropertyToToolParam(
-                  name: e.key,
-                  prop: e.value as Map<String, dynamic>,
-                  isRequired: nestedRequired?.contains(e.key) ?? false,
-                ))
-            .toList() ?? [];
-        return ToolParam.object(name, properties: nestedParams, description: description, required: isRequired);
+        final nestedParams =
+            nestedProps?.entries
+                .map(
+                  (e) => _schemaPropertyToToolParam(
+                    name: e.key,
+                    prop: e.value as Map<String, dynamic>,
+                    isRequired: nestedRequired?.contains(e.key) ?? false,
+                  ),
+                )
+                .toList() ??
+            [];
+        return ToolParam.object(
+          name,
+          properties: nestedParams,
+          description: description,
+          required: isRequired,
+        );
       default:
-        return ToolParam.string(name, description: description, required: isRequired);
+        return ToolParam.string(
+          name,
+          description: description,
+          required: isRequired,
+        );
     }
   }
 

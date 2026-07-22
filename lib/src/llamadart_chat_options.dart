@@ -123,7 +123,9 @@ class LlamadartChatOptions extends ChatModelOptions {
       nGpuLayers: nGpuLayers ?? this.nGpuLayers,
       preferredBackend: preferredBackend ?? this.preferredBackend,
       liteRtLmBackend: liteRtLmBackend ?? this.liteRtLmBackend,
-      chatTemplate: clearChatTemplate ? null : (chatTemplate ?? this.chatTemplate),
+      chatTemplate: clearChatTemplate
+          ? null
+          : (chatTemplate ?? this.chatTemplate),
       temp: temp ?? this.temp,
       topK: topK ?? this.topK,
       topP: topP ?? this.topP,
