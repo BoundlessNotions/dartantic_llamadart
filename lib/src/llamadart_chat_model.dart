@@ -165,9 +165,12 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final hasTools =
         outputSchema != null || (tools != null && tools!.isNotEmpty);
 
-    _session!.reset();
+    final preparedMessages = prepareMessages(messages);
+    _session!
+      ..reset(keepSystemPrompt: false)
+      ..systemPrompt = preparedMessages.systemPrompt;
 
-    final allMessages = messages.toList();
+    final allMessages = preparedMessages.conversation;
     if (allMessages.isEmpty) return;
 
     final lastMessage = allMessages.removeLast();
@@ -345,6 +348,35 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       await _resetEngine();
       rethrow;
     }
+  }
+
+  /// Separates system instructions from conversation turns for [ChatSession].
+  ///
+  /// LlamaDart stores its system prompt outside session history and filters
+  /// system-role messages added through `addMessage`. Combine any system
+  /// messages here so they survive that transfer while user/model turns retain
+  /// their original order and roles.
+  @visibleForTesting
+  static ({String? systemPrompt, List<ChatMessage> conversation})
+  prepareMessages(Iterable<ChatMessage> messages) {
+    final systemPrompts = <String>[];
+    final conversation = <ChatMessage>[];
+
+    for (final message in messages) {
+      if (message.role == ChatMessageRole.system) {
+        final text = message.text.trim();
+        if (text.isNotEmpty) {
+          systemPrompts.add(text);
+        }
+      } else {
+        conversation.add(message);
+      }
+    }
+
+    return (
+      systemPrompt: systemPrompts.isEmpty ? null : systemPrompts.join('\n\n'),
+      conversation: conversation,
+    );
   }
 
   ToolDefinition _convertToolToDefinition(Tool<Object> tool) {
