@@ -119,6 +119,23 @@ class LlamaEngineHandle {
   /// acquired. Acquire again for a live engine.
   bool get isEvicted => _entry.evicted;
 
+  /// The chat format detected from the model's template, computed once per
+  /// loaded engine.
+  Future<ChatFormat> chatFormat() => _entry.format ??= _detectFormat();
+
+  Future<ChatFormat> _detectFormat() async {
+    try {
+      final metadata = await engine.getMetadata();
+      return ChatTemplateEngine.detectFormat(
+        metadata['tokenizer.chat_template'],
+      );
+    } catch (_) {
+      // Retry on the next call rather than caching the failure.
+      _entry.format = null;
+      rethrow;
+    }
+  }
+
   /// Waits, in FIFO order, for exclusive use of [engine] and returns the
   /// function that releases it. Call the release exactly once.
   Future<void Function()> lock() => _entry.lock();
@@ -128,6 +145,7 @@ class _EngineEntry {
   _EngineEntry(this.engine);
 
   final Future<LlamaEngine> engine;
+  Future<ChatFormat>? format;
   bool evicted = false;
   Future<void> _lockTail = Future.value();
 
