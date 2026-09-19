@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Concurrent generations on a shared engine no longer truncate each other.
+  `sendStream` called `cancelGeneration()` before every generation to stop
+  zombies left by timed-out callers, which also silently cut off a generation
+  another model was still reading. Generations on one engine now queue behind
+  a FIFO lock (`LlamaEngineHandle.lock`). Native generation is cancelled when
+  the subscriber cancels the stream (which is what `.timeout` does) or the
+  model is disposed, so abandoned generations release the engine promptly.
 - After a failed generation evicted the shared engine, other chat models on
   the same model kept calling the disposed engine. Chat models no longer hold
   an engine; they acquire from `LlamaEngineCache` on every call. Breaking:

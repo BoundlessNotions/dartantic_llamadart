@@ -19,6 +19,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   // ignore: overridden_fields, annotate_overrides
   final List<Tool<Object>>? tools;
 
+  final Set<_GenerationState> _generations = {};
+
   LlamadartChatModel({
     required this.provider,
     required super.name,
@@ -121,28 +123,85 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     List<ChatMessage> messages, {
     LlamadartChatOptions? options,
     Schema? outputSchema,
-  }) async* {
-    // Acquire per call rather than holding the engine: another model sharing
-    // it may have evicted it after a failed generation, and the cache then
-    // hands out a fresh one.
-    final handle = await LlamaEngineCache.instance.acquire(
-      provider.modelPath,
-      _modelParams(),
+  }) {
+    final state = _GenerationState();
+    final results = _send(state, messages, options, outputSchema);
+
+    // A generator waiting on the next token only sees a cancel once that
+    // token arrives, and prompt processing can take seconds. Stopping the
+    // native generation on cancel (what a `.timeout` on this stream does)
+    // ends the engine stream now, so the lock is released promptly.
+    late final StreamController<ChatResult<ChatMessage>> controller;
+    controller = StreamController(
+      onListen: () {
+        _generations.add(state);
+        final subscription = results.listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: () {
+            _generations.remove(state);
+            controller.close();
+          },
+        );
+        controller
+          ..onPause = subscription.pause
+          ..onResume = subscription.resume
+          ..onCancel = () {
+            _generations.remove(state);
+            state.cancel();
+            return subscription.cancel();
+          };
+      },
     );
+    return controller.stream;
+  }
+
+  Stream<ChatResult<ChatMessage>> _send(
+    _GenerationState state,
+    List<ChatMessage> messages,
+    LlamadartChatOptions? options,
+    Schema? outputSchema,
+  ) async* {
+    if (messages.isEmpty) return;
+
+    // Generations on a shared engine are serialized; the lock is released
+    // however this stream ends.
+    final (handle, release) = await _lockEngine();
+    try {
+      if (state.cancelled) return;
+      yield* _generate(state, handle, messages, options, outputSchema);
+    } finally {
+      release();
+    }
+  }
+
+  /// Acquires the shared engine and waits for exclusive use of it.
+  Future<(LlamaEngineHandle, void Function())> _lockEngine() async {
+    while (true) {
+      // Acquire per call rather than holding the engine: another model
+      // sharing it may have evicted it, and the cache then loads a fresh one.
+      final handle = await LlamaEngineCache.instance.acquire(
+        provider.modelPath,
+        _modelParams(),
+      );
+      final release = await handle.lock();
+      // The holder ahead of us may have evicted it after a failed generation.
+      if (!handle.isEvicted) return (handle, release);
+      release();
+    }
+  }
+
+  Stream<ChatResult<ChatMessage>> _generate(
+    _GenerationState state,
+    LlamaEngineHandle handle,
+    List<ChatMessage> messages,
+    LlamadartChatOptions? options,
+    Schema? outputSchema,
+  ) async* {
     final engine = handle.engine;
-
-    // The engine is shared across chat models. A caller that timed out on a
-    // previous call cannot cancel the underlying native generation via
-    // `.timeout` — it keeps running. Interrupt it here so this call doesn't
-    // race (or queue behind) an abandoned zombie generation. Safe when idle:
-    // the cancel token is per-generation and null between runs.
-    engine.cancelGeneration();
-
     final format = await _getChatFormat(engine);
     final hasTools =
         outputSchema != null || (tools != null && tools!.isNotEmpty);
-
-    if (messages.isEmpty) return;
 
     // The whole history goes straight to engine.create. llamadart's
     // ChatSession drops system-role history messages and has no
@@ -182,6 +241,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // schema-shaped JSON rather than a tool call.
     final grammar = grammarForSchema(outputSchema, isLiteRtLm: isLiteRtLm);
 
+    var completed = false;
+    state.engine = engine;
     try {
       await for (final chunk in engine.create(
         llamaMessages,
@@ -245,6 +306,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           }
         }
       }
+      completed = true;
 
       final rest = _partsFrom(scanner.close(), nextCallId, format);
       if (rest.isNotEmpty) {
@@ -258,6 +320,10 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       // any model sharing it, reloads a clean one.
       await LlamaEngineCache.instance.evict(handle);
       rethrow;
+    } finally {
+      state.engine = null;
+      // Don't leave a generation running on the engine the next caller gets.
+      if (!completed && !handle.isEvicted) engine.cancelGeneration();
     }
   }
 
@@ -586,6 +652,23 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   void dispose() {
     // The engine is owned by LlamaEngineCache and shared across models — do
     // not dispose it here. Use LlamaEngineCache.instance.disposeAll() at app
-    // shutdown to release native resources.
+    // shutdown to release native resources. Stop this model's own generations
+    // so they don't hold the engine for other models.
+    for (final state in List.of(_generations)) {
+      state.cancel();
+    }
+  }
+}
+
+/// Lets a subscriber's cancel reach an in-flight [LlamadartChatModel.sendStream].
+class _GenerationState {
+  bool cancelled = false;
+
+  /// The engine while its `create` stream is being consumed.
+  LlamaEngine? engine;
+
+  void cancel() {
+    cancelled = true;
+    engine?.cancelGeneration();
   }
 }

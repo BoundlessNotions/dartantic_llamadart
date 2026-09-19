@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
 import 'package:llamadart/llamadart.dart'
@@ -273,6 +275,127 @@ void main() {
       await _collectParts(b.sendStream([ChatMessage.user('again')]));
       expect(factory.engines, hasLength(2));
       expect(factory.last.createCalls, hasLength(1));
+    });
+  });
+
+  group('generation lock', () {
+    test('a second generation waits for the first to finish', () async {
+      final gate = Completer<void>();
+      factory.onCreate = (engine) => engine
+        ..enqueue(FakeGeneration([textChunk('one')], gate: gate))
+        ..enqueue(FakeGeneration([textChunk('two')]));
+
+      final first = _collectParts(_model().sendStream([ChatMessage.user('1')]));
+      await pumpEventQueue();
+      final second = _collectParts(
+        _model().sendStream([ChatMessage.user('2')]),
+      );
+      await pumpEventQueue();
+
+      expect(factory.last.createCalls, hasLength(1));
+
+      gate.complete();
+      expect(_text(await first), 'one');
+      expect(_text(await second), 'two');
+      expect(factory.last.createCalls, hasLength(2));
+      expect(factory.last.cancelCalls, 0);
+    });
+
+    test('cancelling mid-stream cancels the native generation once and '
+        'lets the next caller in', () async {
+      final hold = Completer<void>();
+      factory.onCreate = (engine) => engine
+        ..enqueue(FakeGeneration([textChunk('one')], hold: hold))
+        ..enqueue(FakeGeneration([textChunk('two')]));
+
+      final firstChunk = Completer<void>();
+      final subscription = _model()
+          .sendStream([ChatMessage.user('1')])
+          .listen((_) => firstChunk.complete());
+      await firstChunk.future;
+      final second = _collectParts(
+        _model().sendStream([ChatMessage.user('2')]),
+      );
+      await pumpEventQueue();
+      expect(factory.last.createCalls, hasLength(1));
+
+      await subscription.cancel();
+
+      expect(_text(await second), 'two');
+      expect(factory.last.cancelCalls, 1);
+    });
+
+    test('disposing the model stops its generation', () async {
+      final hold = Completer<void>();
+      factory.onCreate = (engine) =>
+          engine.enqueue(FakeGeneration([textChunk('one')], hold: hold));
+      final model = _model();
+
+      final parts = _collectParts(model.sendStream([ChatMessage.user('1')]));
+      await pumpEventQueue();
+      model.dispose();
+
+      expect(_text(await parts), 'one');
+      expect(factory.last.cancelCalls, 1);
+    });
+
+    test(
+      'a request queued behind a failure gets the reloaded engine',
+      () async {
+        final gate = Completer<void>();
+        factory.onCreate = (engine) {
+          if (factory.engines.isEmpty) {
+            engine.enqueue(
+              FakeGeneration(
+                const [],
+                gate: gate,
+                error: LlamaInferenceException('boom'),
+              ),
+            );
+          }
+        };
+
+        final first = _collectParts(
+          _model().sendStream([ChatMessage.user('1')]),
+        );
+        await pumpEventQueue();
+        final second = _collectParts(
+          _model().sendStream([ChatMessage.user('2')]),
+        );
+        await pumpEventQueue();
+        gate.complete();
+
+        await expectLater(first, throwsA(isA<LlamaInferenceException>()));
+        await second;
+        expect(factory.engines, hasLength(2));
+        expect(factory.engines.first.createCalls, hasLength(1));
+        expect(factory.last.createCalls, hasLength(1));
+      },
+    );
+
+    test('different engines generate concurrently', () async {
+      final gate = Completer<void>();
+      factory.onCreate = (engine) {
+        if (factory.engines.isEmpty) {
+          engine.enqueue(FakeGeneration([textChunk('slow')], gate: gate));
+        }
+      };
+
+      final slow = _collectParts(
+        _model(
+          options: const LlamadartChatOptions(nCtx: 1024),
+        ).sendStream([ChatMessage.user('1')]),
+      );
+      await pumpEventQueue();
+      await _collectParts(
+        _model(
+          options: const LlamadartChatOptions(nCtx: 2048),
+        ).sendStream([ChatMessage.user('2')]),
+      );
+
+      expect(factory.engines, hasLength(2));
+      gate.complete();
+      expect(_text(await slow), 'slow');
     });
   });
 }

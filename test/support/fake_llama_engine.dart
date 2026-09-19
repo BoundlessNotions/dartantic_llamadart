@@ -10,14 +10,15 @@ const hermesTemplate =
     "{{ m['content'] }}<|im_end|>\n{% endfor %}<tool_call>";
 
 /// One scripted `create` call: [chunks] are replayed in order, then [error]
-/// (if any) is thrown. When [gate] is set, the stream waits on it before the
-/// first chunk so tests can interleave concurrent generations.
+/// (if any) is thrown. The stream waits on [gate] before the first chunk and
+/// on [hold] after the last, so tests can interleave concurrent generations.
 class FakeGeneration {
-  FakeGeneration(this.chunks, {this.error, this.gate});
+  FakeGeneration(this.chunks, {this.error, this.gate, this.hold});
 
   final List<LlamaCompletionChunk> chunks;
   final Object? error;
   final Completer<void>? gate;
+  final Completer<void>? hold;
 }
 
 /// Everything [FakeLlamaEngine.create] was called with.
@@ -48,6 +49,7 @@ class FakeLlamaEngine implements LlamaEngine {
   final Map<String, String> metadata;
   final Queue<FakeGeneration> _script = Queue();
   final List<CreateCall> createCalls = [];
+  final Set<void Function()> _activeStops = {};
 
   String? loadedPath;
   ModelParams? loadedParams;
@@ -111,14 +113,38 @@ class FakeLlamaEngine implements LlamaEngine {
     return _replay(generation);
   }
 
-  Stream<LlamaCompletionChunk> _replay(FakeGeneration generation) async* {
-    final gate = generation.gate;
-    if (gate != null) await gate.future;
-    for (final chunk in generation.chunks) {
-      yield chunk;
+  // A controller rather than async*, like llama.cpp's backend, so cancelling
+  // the subscription returns at once instead of waiting on a pending gate.
+  Stream<LlamaCompletionChunk> _replay(FakeGeneration generation) {
+    var stopped = false;
+    late final StreamController<LlamaCompletionChunk> controller;
+    // Like llama.cpp, cancelGeneration ends the stream without an error.
+    void stop() {
+      stopped = true;
+      _activeStops.remove(stop);
+      if (!controller.isClosed) controller.close();
     }
-    final error = generation.error;
-    if (error != null) throw error;
+
+    controller = StreamController(
+      onListen: () async {
+        _activeStops.add(stop);
+        await generation.gate?.future;
+        for (final chunk in generation.chunks) {
+          if (stopped) return;
+          controller.add(chunk);
+        }
+        await generation.hold?.future;
+        if (stopped) return;
+        final error = generation.error;
+        if (error != null) controller.addError(error);
+        stop();
+      },
+      onCancel: () {
+        stopped = true;
+        _activeStops.remove(stop);
+      },
+    );
+    return controller.stream;
   }
 
   @override
@@ -131,6 +157,9 @@ class FakeLlamaEngine implements LlamaEngine {
   @override
   void cancelGeneration() {
     cancelCalls++;
+    for (final stop in List.of(_activeStops)) {
+      stop();
+    }
   }
 
   @override
