@@ -64,6 +64,15 @@ void main() {
       );
     });
 
+    test('rejects a per-call multimodal projector', () {
+      expect(
+        () => defaults.mergedWith(
+          const LlamadartChatOptions(mmprojPath: '/models/mmproj.gguf'),
+        ),
+        throwsArgumentError,
+      );
+    });
+
     test('accepts a per-call load-time field equal to the default', () {
       expect(
         defaults.mergedWith(const LlamadartChatOptions(nCtx: 4096)).nCtx,

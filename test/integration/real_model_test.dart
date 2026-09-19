@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
@@ -153,5 +154,23 @@ void main() {
 
     final decoded = jsonDecode(texts.join()) as Map<String, dynamic>;
     expect(decoded['ok'], isA<bool>());
+  }, skip: skip);
+
+  test('rejects an image when the model has no projector', () async {
+    await expectLater(
+      model().sendStream([
+        ChatMessage(
+          role: ChatMessageRole.user,
+          parts: [
+            const TextPart('Describe this.'),
+            DataPart(
+              Uint8List.fromList([0x89, 0x50, 0x4e, 0x47]),
+              mimeType: 'image/png',
+            ),
+          ],
+        ),
+      ]).drain<void>(),
+      throwsUnsupportedError,
+    );
   }, skip: skip);
 }

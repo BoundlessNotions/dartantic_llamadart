@@ -30,8 +30,13 @@ class LlamaEngineCache {
 
   final Map<String, _EngineEntry> _entries = {};
 
-  static String keyFor(String modelPath, ModelParams params) => [
+  static String keyFor(
+    String modelPath,
+    ModelParams params, {
+    String? mmprojPath,
+  }) => [
     modelPath,
+    mmprojPath,
     params.contextSize,
     params.gpuLayers,
     params.preferredBackend,
@@ -51,10 +56,13 @@ class LlamaEngineCache {
   /// disposed.
   Future<LlamaEngineHandle> acquire(
     String modelPath,
-    ModelParams params,
-  ) async {
-    final key = keyFor(modelPath, params);
-    final entry = _entries[key] ??= _EngineEntry(_load(modelPath, params));
+    ModelParams params, {
+    String? mmprojPath,
+  }) async {
+    final key = keyFor(modelPath, params, mmprojPath: mmprojPath);
+    final entry = _entries[key] ??= _EngineEntry(
+      _load(modelPath, params, mmprojPath),
+    );
     try {
       return LlamaEngineHandle._(key, entry, await entry.engine);
     } catch (_) {
@@ -63,10 +71,17 @@ class LlamaEngineCache {
     }
   }
 
-  Future<LlamaEngine> _load(String modelPath, ModelParams params) async {
+  Future<LlamaEngine> _load(
+    String modelPath,
+    ModelParams params,
+    String? mmprojPath,
+  ) async {
     final engine = engineFactory();
     try {
       await engine.loadModel(modelPath, modelParams: params);
+      if (mmprojPath != null) {
+        await engine.loadMultimodalProjector(mmprojPath);
+      }
       return engine;
     } catch (_) {
       try {
@@ -82,10 +97,11 @@ class LlamaEngineCache {
   /// use of it. Returns the handle and the function that releases it.
   Future<(LlamaEngineHandle, void Function())> acquireExclusive(
     String modelPath,
-    ModelParams params,
-  ) async {
+    ModelParams params, {
+    String? mmprojPath,
+  }) async {
     while (true) {
-      final handle = await acquire(modelPath, params);
+      final handle = await acquire(modelPath, params, mmprojPath: mmprojPath);
       final release = await handle.lock();
       // The holder ahead of us may have evicted it after a failed generation.
       if (!handle.isEvicted) return (handle, release);

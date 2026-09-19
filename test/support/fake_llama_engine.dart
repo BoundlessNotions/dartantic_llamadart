@@ -62,6 +62,11 @@ class FakeLlamaEngine implements LlamaEngine {
 
   String? loadedPath;
   ModelParams? loadedParams;
+  String? loadedMmproj;
+
+  /// What the loaded projector can take, once one is loaded.
+  bool visionCapable = true;
+  bool audioCapable = true;
   int getMetadataCalls = 0;
   int cancelCalls = 0;
   int disposeCalls = 0;
@@ -155,6 +160,19 @@ class FakeLlamaEngine implements LlamaEngine {
     );
     return controller.stream;
   }
+
+  @override
+  Future<void> loadMultimodalProjector(String mmProjPath) async {
+    _checkNotDisposed('loadMultimodalProjector');
+    loadedMmproj = mmProjPath;
+  }
+
+  @override
+  Future<bool> get supportsVision async =>
+      loadedMmproj != null && visionCapable;
+
+  @override
+  Future<bool> get supportsAudio async => loadedMmproj != null && audioCapable;
 
   @override
   Future<List<double>> embed(String text, {bool normalize = true}) async {

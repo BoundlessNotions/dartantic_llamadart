@@ -1,5 +1,9 @@
 ## 0.7.0
 
+- `LlamadartChatOptions.mmprojPath` loads a multimodal projector with the
+  model, which is what lets a GGUF model read image and audio parts. A request
+  carrying media the engine can't read now throws `UnsupportedError`; before,
+  a model without a projector silently answered from the text alone.
 - A request that didn't set `maxTokens` generated nothing: the value passed
   to llamadart fell back to 0, and llama.cpp's loop generates exactly that
   many tokens. It now falls back to `GenerationParams`' default.
