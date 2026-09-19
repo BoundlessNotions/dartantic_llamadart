@@ -1,0 +1,12 @@
+tags:
+  integration:
+    # Loads a real GGUF named by LLAMADART_TEST_MODEL.
+    skip: 'Integration test; run with dart test -P integration'
+    timeout: 5m
+
+presets:
+  integration:
+    include_tags: integration
+    tags:
+      integration:
+        skip: false

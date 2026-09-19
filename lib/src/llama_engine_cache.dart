@@ -1,4 +1,5 @@
 import 'package:llamadart/llamadart.dart';
+import 'package:meta/meta.dart';
 
 /// Process-wide cache of loaded [LlamaEngine]s, keyed by model path plus the
 /// load-time parameters that shape the native model/context.
@@ -17,6 +18,13 @@ class LlamaEngineCache {
   LlamaEngineCache._();
 
   static final LlamaEngineCache instance = LlamaEngineCache._();
+
+  static LlamaEngine defaultEngineFactory() => LlamaEngine(LlamaBackend());
+
+  /// Builds the engine [acquire] loads. Tests swap in a fake engine so
+  /// generation can be scripted without a native model.
+  @visibleForTesting
+  LlamaEngine Function() engineFactory = defaultEngineFactory;
 
   final Map<String, Future<LlamaEngine>> _engines = {};
 
@@ -38,7 +46,7 @@ class LlamaEngineCache {
     if (existing != null) return existing;
 
     final future = () async {
-      final engine = LlamaEngine(LlamaBackend());
+      final engine = engineFactory();
       try {
         await engine.loadModel(modelPath, modelParams: params);
         return engine;
