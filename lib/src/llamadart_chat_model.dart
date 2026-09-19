@@ -175,6 +175,23 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     }
   }
 
+  /// Whether [error], raised by the engine's `create` stream, can mean the
+  /// native state is corrupt, so the engine has to be reloaded.
+  @visibleForTesting
+  static bool errorCorruptsEngine(Object error) => switch (error) {
+    // Request-shape errors from llamadart's request planner, raised before
+    // generation starts.
+    LlamaUnsupportedException() || LlamaContextException() => false,
+    // llama_cpp_service throws this from tokenization, before any decode.
+    // Checked against SmolLM2 with nCtx 256: after the overflow, the same
+    // engine produced output identical to a pre-overflow baseline. Matched on
+    // the wrapped exception's message since llamadart has no type for it.
+    LlamaInferenceException(:final details)
+        when '$details'.contains('Tokenization failed or prompt too long') =>
+      false,
+    _ => true,
+  };
+
   /// Acquires the shared engine and waits for exclusive use of it.
   Future<(LlamaEngineHandle, void Function())> _lockEngine() async {
     while (true) {
@@ -241,22 +258,34 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // schema-shaped JSON rather than a tool call.
     final grammar = grammarForSchema(outputSchema, isLiteRtLm: isLiteRtLm);
 
+    final params = buildGenerationParams(
+      effectiveOptions,
+      isLiteRtLm: isLiteRtLm,
+      grammar: grammar,
+    );
+
+    // Tag errors that come out of the engine, so a bug in this adapter's own
+    // chunk handling never costs a model reload.
+    Object? engineError;
+    final chunks = engine
+        .create(
+          llamaMessages,
+          enableThinking: true,
+          params: params,
+          tools: llamadartTools,
+          toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
+              ? ToolChoice.auto
+              : null,
+        )
+        .handleError((Object error, StackTrace stackTrace) {
+          engineError = error;
+          Error.throwWithStackTrace(error, stackTrace);
+        });
+
     var completed = false;
     state.engine = engine;
     try {
-      await for (final chunk in engine.create(
-        llamaMessages,
-        enableThinking: true,
-        params: buildGenerationParams(
-          effectiveOptions,
-          isLiteRtLm: isLiteRtLm,
-          grammar: grammar,
-        ),
-        tools: llamadartTools,
-        toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
-            ? ToolChoice.auto
-            : null,
-      )) {
+      await for (final chunk in chunks) {
         final delta = chunk.choices.firstOrNull?.delta;
         if (delta == null) continue;
 
@@ -314,11 +343,13 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           output: ChatMessage(role: ChatMessageRole.model, parts: rest),
         );
       }
-    } catch (_) {
+    } catch (error) {
       // A failed native generation can corrupt the engine, and reusing it
       // segfaults on a worker thread. Evict it so the next call, from this or
       // any model sharing it, reloads a clean one.
-      await LlamaEngineCache.instance.evict(handle);
+      if (identical(error, engineError) && errorCorruptsEngine(error)) {
+        await LlamaEngineCache.instance.evict(handle);
+      }
       rethrow;
     } finally {
       state.engine = null;
