@@ -11,8 +11,6 @@ import 'tool_call_scanner.dart';
 
 class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   final LlamadartProvider provider;
-  // ignore: overridden_fields, annotate_overrides
-  final List<Tool<Object>>? tools;
 
   final Set<_GenerationState> _generations = {};
 
@@ -23,7 +21,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   LlamadartChatModel({
     required this.provider,
     required super.name,
-    this.tools,
+    super.tools,
+    super.temperature,
     required super.defaultOptions,
     this.enableThinking = false,
   });
@@ -379,14 +378,9 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       name: tool.name,
       description: fullDescription,
       parameters: _convertSchemaToParams(tool.inputSchema?.value),
-      handler: (params) async {
-        // If a zone-scoped tool-target map is present (keyed by #toolTargets),
-        // prefer the real handler from that map over the placeholder onCall.
-        final zoneTargets =
-            Zone.current[#toolTargets] as Map<String, Tool<Object>>?;
-        final actualTool = zoneTargets?[tool.name] ?? tool;
-        return await actualTool.onCall(params.raw);
-      },
+      // dartantic executes tools itself from the ToolParts this model yields.
+      handler: (_) =>
+          throw StateError('dartantic executes tools; llamadart must not'),
     );
   }
 

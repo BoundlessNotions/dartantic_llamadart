@@ -54,6 +54,7 @@ class LlamadartProvider
       provider: this,
       name: modelName,
       tools: tools,
+      temperature: temperature,
       defaultOptions: (options ?? const LlamadartChatOptions()).copyWith(
         temp: temperature,
       ),
