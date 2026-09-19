@@ -41,8 +41,12 @@ await for (final chunk in agent.sendStream(
 await LlamaEngineCache.instance.disposeAll();
 ```
 
-`example/dartantic_llamadart_example.dart` is this program, ready to run:
-`dart run example/dartantic_llamadart_example.dart path/to/model.gguf`.
+`example/` is this program, ready to run:
+
+```console
+$ cd example
+$ dart run dartantic_llamadart_example.dart path/to/model.gguf
+```
 
 ## Options
 

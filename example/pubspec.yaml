@@ -1,0 +1,19 @@
+name: dartantic_llamadart_example
+description: Runnable example for dartantic_llamadart.
+publish_to: none
+
+# Its own package so dartantic_ai, which the example drives the provider
+# through, stays out of dartantic_llamadart's dev dependencies: it requires a
+# newer dartantic_interface than the package does, and would stop the
+# `dart pub downgrade` CI leg from resolving the declared lower bounds.
+
+environment:
+  sdk: '>=3.10.7 <4.0.0'
+
+dependencies:
+  dartantic_ai: ^3.4.2
+  dartantic_llamadart:
+    path: ../
+
+dev_dependencies:
+  lints: ^6.1.0
