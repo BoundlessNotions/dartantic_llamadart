@@ -468,4 +468,41 @@ void main() {
       expect(factory.engines, hasLength(1));
     });
   });
+
+  group('per-engine state', () {
+    test('detects the chat format once per engine', () async {
+      await _collectParts(_model().sendStream([ChatMessage.user('1')]));
+      await _collectParts(_model().sendStream([ChatMessage.user('2')]));
+
+      expect(factory.last.getMetadataCalls, 1);
+    });
+
+    test('carries finishReason from the chunk that reports it', () async {
+      factory.onCreate = (engine) => engine.enqueue(
+        FakeGeneration([
+          toolCallChunk(name: 'get_weather', arguments: '{}'),
+          finishChunk('tool_calls'),
+        ]),
+      );
+
+      final results = await _model().sendStream([
+        ChatMessage.user('1'),
+      ]).toList();
+
+      expect(results.last.finishReason, FinishReason.toolCalls);
+    });
+
+    test('repeats finishReason on a flushed tail', () async {
+      factory.onCreate = (engine) => engine.enqueue(
+        FakeGeneration([textChunk('a <'), finishChunk('stop')]),
+      );
+
+      final results = await _model().sendStream([
+        ChatMessage.user('1'),
+      ]).toList();
+
+      expect(results.last.output.text, '<');
+      expect(results.last.finishReason, FinishReason.stop);
+    });
+  });
 }

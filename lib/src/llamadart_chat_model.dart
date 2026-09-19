@@ -49,12 +49,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     );
   }
 
-  Future<ChatFormat> _getChatFormat(LlamaEngine engine) async {
-    final metadata = await engine.getMetadata();
-    final template = metadata['tokenizer.chat_template'];
-    return ChatTemplateEngine.detectFormat(template);
-  }
-
   /// Converts a dartantic [Schema] into a GBNF grammar for constrained
   /// decoding, or null when the schema can't be converted or the backend
   /// (LiteRT-LM) doesn't support grammar constraints.
@@ -216,7 +210,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     Schema? outputSchema,
   ) async* {
     final engine = handle.engine;
-    final format = await _getChatFormat(engine);
+    final format = await handle.chatFormat();
     final hasTools =
         outputSchema != null || (tools != null && tools!.isNotEmpty);
 
@@ -283,64 +277,49 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         });
 
     var completed = false;
+    var finishReason = FinishReason.unspecified;
     state.engine = engine;
     try {
       await for (final chunk in chunks) {
-        final delta = chunk.choices.firstOrNull?.delta;
-        if (delta == null) continue;
+        final choice = chunk.choices.firstOrNull;
+        if (choice == null) continue;
+        final delta = choice.delta;
+        final parts = <Part>[];
 
-        if (delta.thinking != null && delta.thinking!.isNotEmpty) {
-          yield ChatResult(
-            output: ChatMessage(
-              role: ChatMessageRole.model,
-              parts: [ThinkingPart(delta.thinking!)],
-            ),
-          );
+        final thinking = delta.thinking;
+        if (thinking != null && thinking.isNotEmpty) {
+          parts.add(ThinkingPart(thinking));
         }
 
-        if (delta.toolCalls != null && delta.toolCalls!.isNotEmpty) {
-          final parts = <Part>[];
-          for (final tc in delta.toolCalls!) {
-            final args = <String, dynamic>{};
-            if (tc.function?.arguments != null) {
-              try {
-                final argsMap =
-                    jsonDecode(tc.function!.arguments!) as Map<String, dynamic>;
-                args.addAll(argsMap);
-              } catch (_) {
-                args['raw'] = tc.function!.arguments;
-              }
-            }
-            parts.add(
-              ToolPart.call(
-                callId: tc.id ?? nextCallId(),
-                toolName: tc.function?.name ?? 'unknown',
-                arguments: args,
-              ),
-            );
-          }
+        final toolCalls = delta.toolCalls;
+        final content = delta.content;
+        if (toolCalls != null && toolCalls.isNotEmpty) {
+          parts.addAll(toolCalls.map((tc) => _toolCallPart(tc, nextCallId)));
+        } else if (content != null && content.isNotEmpty) {
+          parts.addAll(_partsFrom(scanner.add(content), nextCallId, format));
+        }
+
+        if (choice.finishReason != null) {
+          finishReason = _toFinishReason(choice.finishReason);
+        }
+        if (parts.isNotEmpty || choice.finishReason != null) {
           yield ChatResult(
             output: ChatMessage(role: ChatMessageRole.model, parts: parts),
+            finishReason: choice.finishReason != null
+                ? finishReason
+                : FinishReason.unspecified,
           );
-          continue;
-        }
-
-        final content = delta.content;
-        if (content != null && content.isNotEmpty) {
-          final parts = _partsFrom(scanner.add(content), nextCallId, format);
-          if (parts.isNotEmpty) {
-            yield ChatResult(
-              output: ChatMessage(role: ChatMessageRole.model, parts: parts),
-            );
-          }
         }
       }
       completed = true;
 
+      // Callers read the finish reason off the last result, so the flushed
+      // tail repeats it.
       final rest = _partsFrom(scanner.close(), nextCallId, format);
       if (rest.isNotEmpty) {
         yield ChatResult(
           output: ChatMessage(role: ChatMessageRole.model, parts: rest),
+          finishReason: finishReason,
         );
       }
     } catch (error) {
@@ -357,6 +336,34 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       if (!completed && !handle.isEvicted) engine.cancelGeneration();
     }
   }
+
+  ToolPart _toolCallPart(
+    LlamaCompletionChunkToolCall toolCall,
+    String Function() nextCallId,
+  ) {
+    final function = toolCall.function;
+    final rawArguments = function?.arguments;
+    final arguments = <String, dynamic>{};
+    if (rawArguments != null) {
+      try {
+        arguments.addAll(jsonDecode(rawArguments) as Map<String, dynamic>);
+      } catch (_) {
+        arguments['raw'] = rawArguments;
+      }
+    }
+    return ToolPart.call(
+      callId: toolCall.id ?? nextCallId(),
+      toolName: function?.name ?? 'unknown',
+      arguments: arguments,
+    );
+  }
+
+  /// llamadart only reports 'stop' and 'tool_calls'.
+  static FinishReason _toFinishReason(String? reason) => switch (reason) {
+    'stop' => FinishReason.stop,
+    'tool_calls' => FinishReason.toolCalls,
+    _ => FinishReason.unspecified,
+  };
 
   ToolDefinition _convertToolToDefinition(Tool<Object> tool) {
     final examples = _extractExamples(tool.inputSchema);

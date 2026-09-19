@@ -1,5 +1,8 @@
 ## Unreleased
 
+- `ChatResult.finishReason` is populated: llamadart's `stop` and `tool_calls`
+  map to `FinishReason.stop` and `FinishReason.toolCalls`. The chat format is
+  detected once per loaded engine instead of on every call.
 - A failed request no longer always reloads the model. Only errors from the
   engine's generation stream that can mean native corruption evict the shared
   engine (`LlamaInferenceException` and non-llamadart errors). Request-shape
