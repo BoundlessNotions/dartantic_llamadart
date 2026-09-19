@@ -12,6 +12,8 @@ dependencies:
   meta: ^1.11.0
 
 dev_dependencies:
+  # For the example only.
+  dartantic_ai: ^3.4.2
   # Not imported. Raises the floor of a test runner dependency: 3.x looks for
   # the JIT frontend_server snapshot, which current Dart SDKs no longer ship,
   # so `dart test` fails after `dart pub downgrade` without it.
