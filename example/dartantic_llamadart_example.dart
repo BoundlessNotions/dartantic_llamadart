@@ -1,45 +1,39 @@
-import 'package:dartantic_interface/dartantic_interface.dart';
+import 'dart:io';
+
+import 'package:dartantic_ai/dartantic_ai.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
 
-void main() async {
-  // 1. Setup the Llamadart provider with a path to a GGUF model.
+/// Streams a reply from a local GGUF model through a dartantic [Agent].
+///
+/// Run with `dart run example/dartantic_llamadart_example.dart path/to.gguf`.
+Future<void> main(List<String> args) async {
+  if (args.isEmpty) {
+    stderr.writeln('Usage: dartantic_llamadart_example <model.gguf>');
+    exit(64);
+  }
+
   final provider = LlamadartProvider(
     name: 'llamadart',
     displayName: 'Local Llama',
-    modelPath: 'models/llama3.2-1b.gguf', // Replace with your actual model path
+    modelPath: args.first,
+  );
+  final agent = Agent.forProvider(
+    provider,
+    chatModelOptions: const LlamadartChatOptions(nCtx: 4096, temp: 0.7),
   );
 
-  // 2. Create a chat model.
-  final chatModel = provider.createChatModel(
-    name: 'llama3.2-1b',
-    options: const LlamadartChatOptions(temp: 0.7, nCtx: 2048),
-  );
-
-  // 3. Define messages.
-  final messages = [
-    ChatMessage(
-      role: ChatMessageRole.system,
-      parts: [TextPart('You are a helpful assistant.')],
-    ),
-    ChatMessage(
-      role: ChatMessageRole.user,
-      parts: [TextPart('Hello! Who are you?')],
-    ),
-  ];
-
-  // 4. Generate a response.
-  print('Generating response (offline)...');
-  // In Dartantic v1.2.0, generate might be available on ChatModel extension or as a method.
-  // If it's missing, we use sendStream().last.
-  final result = await chatModel.sendStream(messages).last;
-
-  print('Response:');
-  for (final part in result.output.parts) {
-    if (part is TextPart) {
-      print(part.text);
+  try {
+    await for (final chunk in agent.sendStream(
+      'Hello! Who are you?',
+      history: [
+        ChatMessage.system('You are a pirate. Answer in one sentence.'),
+      ],
+    )) {
+      stdout.write(chunk.output);
     }
+    stdout.writeln();
+  } finally {
+    // Engines are shared process-wide; release native memory on shutdown.
+    await LlamaEngineCache.instance.disposeAll();
   }
-
-  // 5. Cleanup
-  chatModel.dispose();
 }
