@@ -12,6 +12,7 @@ import 'package:meta/meta.dart';
 import 'llama_engine_cache.dart';
 import 'llamadart_chat_options.dart';
 import 'llamadart_provider.dart';
+import 'tool_call_scanner.dart';
 
 class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   final LlamadartProvider provider;
@@ -172,13 +173,22 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     ];
 
     final effectiveOptions = options ?? defaultOptions;
-    final buffer = StringBuffer();
-    final thinkingBuffer = StringBuffer();
-    int toolCallIdCounter = 0;
+    var toolCallIdCounter = 0;
+    String nextCallId() => 'call_${toolCallIdCounter++}';
 
     final llamadartTools = tools
         ?.map((t) => _convertToolToDefinition(t))
         .toList();
+
+    // With tools, llamadart's template handler parses calls into
+    // delta.toolCalls. Scanning the content too would parse them twice, so
+    // the text fallback only runs for tool-less requests (e.g. prompt-
+    // instructed calls).
+    final scanner = ToolCallScanner(
+      llamadartTools == null || llamadartTools.isEmpty
+          ? toolCallEnvelopes(format)
+          : const [],
+    );
 
     // LiteRT-LM rejects llama.cpp-only sampling knobs (minP, penalty) when they
     // differ from GenerationParams defaults. Route on the model path the same
@@ -210,7 +220,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         if (delta == null) continue;
 
         if (delta.thinking != null && delta.thinking!.isNotEmpty) {
-          thinkingBuffer.write(delta.thinking!);
           yield ChatResult(
             output: ChatMessage(
               role: ChatMessageRole.model,
@@ -234,7 +243,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
             }
             parts.add(
               ToolPart.call(
-                callId: tc.id ?? 'call_${toolCallIdCounter++}',
+                callId: tc.id ?? nextCallId(),
                 toolName: tc.function?.name ?? 'unknown',
                 arguments: args,
               ),
@@ -246,74 +255,21 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           continue;
         }
 
-        if (delta.content != null && delta.content!.isNotEmpty) {
-          buffer.write(delta.content!);
-
-          final bufferedContent = buffer.toString();
-
-          final toolCallPatterns = _getToolCallPatterns(format);
-          List<RegExpMatch>? matches;
-
-          for (final pattern in toolCallPatterns) {
-            final found = pattern.allMatches(bufferedContent).toList();
-            if (found.isNotEmpty) {
-              matches = found;
-              break;
-            }
-          }
-
-          matches ??= [];
-
-          if (matches.isNotEmpty) {
-            int lastEnd = 0;
-            final parts = <Part>[];
-
-            for (final match in matches) {
-              if (match.start > lastEnd) {
-                parts.add(
-                  TextPart(bufferedContent.substring(lastEnd, match.start)),
-                );
-              }
-
-              final toolCallContent = match.group(1)!;
-              final parsed = _parseToolCall(
-                toolCallContent,
-                'call_${toolCallIdCounter++}',
-                format,
-              );
-              parts.add(parsed);
-
-              lastEnd = match.end;
-            }
-
-            if (lastEnd < bufferedContent.length) {
-              buffer.clear();
-              buffer.write(bufferedContent.substring(lastEnd));
-            } else {
-              buffer.clear();
-            }
-
+        final content = delta.content;
+        if (content != null && content.isNotEmpty) {
+          final parts = _partsFrom(scanner.add(content), nextCallId, format);
+          if (parts.isNotEmpty) {
             yield ChatResult(
               output: ChatMessage(role: ChatMessageRole.model, parts: parts),
-            );
-          } else {
-            yield ChatResult(
-              output: ChatMessage(
-                role: ChatMessageRole.model,
-                parts: [TextPart(delta.content!)],
-              ),
             );
           }
         }
       }
 
-      final remainingContent = buffer.toString();
-      if (remainingContent.isNotEmpty) {
+      final rest = _partsFrom(scanner.close(), nextCallId, format);
+      if (rest.isNotEmpty) {
         yield ChatResult(
-          output: ChatMessage(
-            role: ChatMessageRole.model,
-            parts: [TextPart(remainingContent)],
-          ),
+          output: ChatMessage(role: ChatMessageRole.model, parts: rest),
         );
       }
     } catch (_) {
@@ -452,40 +408,46 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     }
   }
 
-  List<RegExp> _getToolCallPatterns(ChatFormat format) {
-    final formatStr = format.name;
+  static const _hermesEnvelope = ToolCallEnvelope(
+    '<tool_call>',
+    '</tool_call>',
+  );
 
-    if (formatStr.contains('gemma4')) {
-      // Gemma4Handler already extracts tool calls from the full output and
-      // yields them as delta.toolCalls with complete arguments.  Applying a
-      // text regex here too would fire on the raw content chunks BEFORE the
-      // native chunk arrives, capturing only the tool name (group 1 of the
-      // old regex was (\w+), not the full call expression) and creating
-      // spurious `error` tool calls that confuse the agent.
-      return [];
-    }
+  /// Tool-call envelopes each format may write into plain content.
+  static final Map<ChatFormat, List<ToolCallEnvelope>> _envelopesByFormat = {
+    // Gemma4Handler extracts tool calls from the full output itself.
+    ChatFormat.gemma4: const [],
+    ChatFormat.functionGemma: const [
+      ToolCallEnvelope('<start_function_call>', '<end_function_call>'),
+    ],
+    ChatFormat.hermes: const [_hermesEnvelope],
+    ChatFormat.deepseekV3: const [_hermesEnvelope],
+  };
 
-    switch (format) {
-      case ChatFormat.functionGemma:
-        return [
-          RegExp(
-            r'<start_function_call>(.*?)<end_function_call>',
-            dotAll: true,
-          ),
-        ];
-      case ChatFormat.hermes:
-      case ChatFormat.deepseekV3:
-        return [RegExp(r'<tool_call>(.*?)</tool_call>', dotAll: true)];
-      default:
-        return [
-          RegExp(r'<tool_call>(.*?)</tool_call>', dotAll: true),
-          RegExp(
-            r'<\|tool_call>call:(\w+)\{(.*?)}<\|tool_call\|>',
-            dotAll: true,
-          ),
-        ];
-    }
-  }
+  static const _defaultEnvelopes = [
+    _hermesEnvelope,
+    ToolCallEnvelope('<|tool_call>', '<|tool_call|>'),
+  ];
+
+  @visibleForTesting
+  static List<ToolCallEnvelope> toolCallEnvelopes(ChatFormat format) =>
+      _envelopesByFormat[format] ?? _defaultEnvelopes;
+
+  List<Part> _partsFrom(
+    List<ScanSegment> segments,
+    String Function() nextCallId,
+    ChatFormat format,
+  ) => [
+    for (final segment in segments)
+      switch (segment) {
+        TextSegment(:final text) => TextPart(text),
+        EnvelopeSegment(:final body) => _parseToolCall(
+          body,
+          nextCallId(),
+          format,
+        ),
+      },
+  ];
 
   ToolPart _parseToolCall(String content, String callId, ChatFormat format) {
     try {
