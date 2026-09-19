@@ -1,5 +1,11 @@
 ## Unreleased
 
+- `sendStream` no longer emits every plain-text reply twice. Each content
+  delta was yielded and also kept in a buffer that was flushed again after the
+  stream ended, and dartantic concatenates streamed `TextPart`s. Content is
+  now yielded exactly once; only text that could still be the start of a
+  tool-call envelope is held back. The text tool-call fallback only runs when
+  no tools were passed, since llamadart parses calls itself when they are.
 - System messages now reach the model. `sendStream` went through llamadart's
   `ChatSession`, which filters system-role messages out of its history, so
   every `ChatMessage.system` was dropped before the prompt was rendered. The

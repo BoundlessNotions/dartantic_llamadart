@@ -96,7 +96,7 @@ void main() {
     }
 
     expect(texts.join(), isNotEmpty);
-    expect(engine.streamedContent.toString(), isNotEmpty);
+    expect(texts.join(), engine.streamedContent.toString());
   }, skip: skip);
 
   test('a system prompt reaches the real engine', () async {

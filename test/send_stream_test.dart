@@ -57,8 +57,65 @@ void main() {
       model.sendStream([ChatMessage.user('hi')]),
     );
 
-    // Known bug: the trailing buffer flush re-yields the whole reply.
-    expect(_text(parts), 'Hello!Hello!');
+    expect(_text(parts), 'Hello!');
+  });
+
+  group('text tool-call fallback', () {
+    Future<List<Part>> run(List<String> chunks, {List<Tool<Object>>? tools}) {
+      factory.onCreate = (engine) => engine.enqueue(
+        FakeGeneration([for (final c in chunks) textChunk(c)]),
+      );
+      return _collectParts(
+        _model(tools: tools).sendStream([ChatMessage.user('hi')]),
+      );
+    }
+
+    test(
+      'an envelope split mid-tag yields the text once and one call',
+      () async {
+        final parts = await run([
+          'Sure. <tool_',
+          'call>{"get_weather": {"city": ',
+          '"Paris"}}</tool',
+          '_call> Done.',
+        ]);
+
+        expect(_text(parts), 'Sure.  Done.');
+        final call = parts.whereType<ToolPart>().single;
+        expect(call.toolName, 'get_weather');
+        expect(call.arguments, {'city': 'Paris'});
+      },
+    );
+
+    test('a trailing < that never becomes a tag is flushed once', () async {
+      final parts = await run(['a <', 'b <']);
+
+      expect(_text(parts), 'a <b <');
+      expect(parts.whereType<ToolPart>(), isEmpty);
+    });
+
+    test('an unterminated envelope is flushed as text once', () async {
+      final parts = await run(['x <tool_call>{"a"', ': {}}']);
+
+      expect(_text(parts), 'x <tool_call>{"a": {}}');
+      expect(parts.whereType<ToolPart>(), isEmpty);
+    });
+
+    test('does not scan content when tools went to the engine', () async {
+      final parts = await run(
+        ['<tool_call>{"get_weather": {}}</tool_call>'],
+        tools: [
+          Tool<Map<String, dynamic>>(
+            name: 'get_weather',
+            description: 'Weather for a city',
+            onCall: (_) => {},
+          ),
+        ],
+      );
+
+      expect(_text(parts), '<tool_call>{"get_weather": {}}</tool_call>');
+      expect(parts.whereType<ToolPart>(), isEmpty);
+    });
   });
 
   test('streams thinking deltas as ThinkingParts', () async {
