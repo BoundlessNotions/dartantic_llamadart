@@ -1,5 +1,16 @@
 ## Unreleased
 
+- `enableThinking` passed to `createChatModel` is honored (it was dropped,
+  and generation always ran with thinking on). Behavior change: it defaults
+  to false, so thinking-capable models don't reason unless asked.
+- Per-call `LlamadartChatOptions` merge over the model's default options
+  instead of replacing them, so `LlamadartChatOptions(temp: 0.2)` keeps the
+  default `topK`, `maxTokens`, etc. Load-time fields (`nCtx`, `nGpuLayers`,
+  `preferredBackend`, `liteRtLmBackend`, `chatTemplate`, `mtpDraftModelPath`,
+  `mtpDraftTokenMax`) set per call to a value different from the defaults
+  throw `ArgumentError`; they were silently ignored.
+- `reusePromptPrefix`, `streamBatchTokenThreshold`, and
+  `streamBatchByteThreshold` now reach llamadart's `GenerationParams`.
 - Tool schemas with non-string `examples`, non-string `enum` values, or a
   list-valued `type` (e.g. `["string", "null"]`) no longer throw a
   `TypeError`. Non-string examples are JSON-encoded; a non-string enum keeps

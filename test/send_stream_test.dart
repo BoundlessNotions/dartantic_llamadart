@@ -612,4 +612,45 @@ void main() {
       expect(factory.last.createCalls.single.responseFormat, isNull);
     });
   });
+
+  group('options', () {
+    test('thinking is off unless the provider was asked for it', () async {
+      await _collectParts(_model().sendStream([ChatMessage.user('1')]));
+      expect(factory.last.createCalls.last.enableThinking, isFalse);
+
+      final thinking = LlamadartProvider(
+        name: 'llamadart',
+        displayName: 'Local Llama',
+        modelPath: '/models/fake.gguf',
+      ).createChatModel(enableThinking: true);
+      await _collectParts(thinking.sendStream([ChatMessage.user('2')]));
+      expect(factory.last.createCalls.last.enableThinking, isTrue);
+    });
+
+    test('per-call options merge over the defaults', () async {
+      await _collectParts(
+        _model(
+          options: const LlamadartChatOptions(topK: 7, maxTokens: 64),
+        ).sendStream([
+          ChatMessage.user('1'),
+        ], options: const LlamadartChatOptions(temp: 0.2)),
+      );
+
+      final params = factory.last.createCalls.single.params!;
+      expect(params.temp, 0.2);
+      expect(params.topK, 7);
+      expect(params.maxTokens, 64);
+    });
+
+    test('a per-call load-time field fails the call', () async {
+      await expectLater(
+        _collectParts(
+          _model().sendStream([
+            ChatMessage.user('1'),
+          ], options: const LlamadartChatOptions(nCtx: 1024)),
+        ),
+        throwsArgumentError,
+      );
+    });
+  });
 }

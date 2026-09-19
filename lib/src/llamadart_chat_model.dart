@@ -16,11 +16,16 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
 
   final Set<_GenerationState> _generations = {};
 
+  /// Whether the model may produce reasoning before its answer, on models and
+  /// templates that support it.
+  final bool enableThinking;
+
   LlamadartChatModel({
     required this.provider,
     required super.name,
     this.tools,
     required super.defaultOptions,
+    this.enableThinking = false,
   });
 
   /// Load-time parameters; together with the model path they pick the shared
@@ -91,10 +96,18 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           : (options.repeatPenalty ?? 1.1),
       minP: isLiteRtLm ? genDefaults.minP : (options.minP ?? 0.05),
       maxTokens: options.maxTokens ?? 0,
+      reusePromptPrefix:
+          options.reusePromptPrefix ?? genDefaults.reusePromptPrefix,
+      streamBatchTokenThreshold:
+          options.streamBatchTokenThreshold ??
+          genDefaults.streamBatchTokenThreshold,
+      streamBatchByteThreshold:
+          options.streamBatchByteThreshold ??
+          genDefaults.streamBatchByteThreshold,
       // LiteRT-LM honours the legacy bool; GGUF self-MTP also uses it. GGUF with
       // a separate drafter uses the explicit config below instead. draftTokenMax
       // must match the rollback snapshots reserved at model load (see
-      // _ensureInitialized).
+      // _modelParams).
       speculativeDecoding: useGgufMtp
           ? false
           : (options.speculativeDecoding ?? false),
@@ -152,13 +165,14 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     Schema? outputSchema,
   ) async* {
     if (messages.isEmpty) return;
+    final effectiveOptions = defaultOptions.mergedWith(options);
 
     // Generations on a shared engine are serialized; the lock is released
     // however this stream ends.
     final (handle, release) = await _lockEngine();
     try {
       if (state.cancelled) return;
-      yield* _generate(state, handle, messages, options, outputSchema);
+      yield* _generate(state, handle, messages, effectiveOptions, outputSchema);
     } finally {
       release();
     }
@@ -201,7 +215,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     _GenerationState state,
     LlamaEngineHandle handle,
     List<ChatMessage> messages,
-    LlamadartChatOptions? options,
+    LlamadartChatOptions effectiveOptions,
     Schema? outputSchema,
   ) async* {
     final engine = handle.engine;
@@ -217,7 +231,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         toLlamaMessage(msg, format: format, hasTools: hasTools),
     ];
 
-    final effectiveOptions = options ?? defaultOptions;
     var toolCallIdCounter = 0;
     String nextCallId() => 'call_${toolCallIdCounter++}';
 
@@ -250,7 +263,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final chunks = engine
         .create(
           llamaMessages,
-          enableThinking: true,
+          enableThinking: enableThinking,
           params: params,
           responseFormat: responseFormatFor(
             outputSchema,
