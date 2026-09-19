@@ -1,6 +1,7 @@
 @Tags(['integration'])
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dartantic_interface/dartantic_interface.dart';
@@ -109,5 +110,26 @@ void main() {
       LlamaChatRole.system,
       LlamaChatRole.user,
     ]);
+  }, skip: skip);
+
+  test('cancelling mid-stream frees the engine for the next call', () async {
+    final firstChunk = Completer<void>();
+    final subscription = model()
+        .sendStream([ChatMessage.user('Count from one to fifty.')])
+        .listen((_) {
+          if (!firstChunk.isCompleted) firstChunk.complete();
+        });
+    await firstChunk.future;
+    await subscription.cancel();
+
+    final texts = <String>[];
+    await for (final result in model().sendStream([
+      ChatMessage.user('Say hello.'),
+    ])) {
+      texts.addAll(
+        result.output.parts.whereType<TextPart>().map((p) => p.text),
+      );
+    }
+    expect(texts.join(), isNotEmpty);
   }, skip: skip);
 }

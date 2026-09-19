@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:llamadart/llamadart.dart';
 import 'package:meta/meta.dart';
 
@@ -11,9 +13,9 @@ import 'package:meta/meta.dart';
 /// on every call and leak the previous engine's native handles.
 ///
 /// Engines are shared, not pooled: two chat models with the same key get the
-/// same engine. Generations must therefore never overlap — callers interrupt
-/// any in-flight generation via [LlamaEngine.cancelGeneration] before starting
-/// a new one (the chat model does this automatically).
+/// same engine. Generations on one engine must not overlap, so callers take
+/// [LlamaEngineHandle.lock] around each generation (the chat model does this)
+/// and queue behind whoever holds it.
 class LlamaEngineCache {
   LlamaEngineCache._();
 
@@ -93,6 +95,7 @@ class LlamaEngineCache {
   }
 
   Future<void> _dispose(_EngineEntry entry) async {
+    entry.evicted = true;
     try {
       final engine = await entry.engine;
       engine.cancelGeneration();
@@ -111,10 +114,28 @@ class LlamaEngineHandle {
   final String key;
   final LlamaEngine engine;
   final _EngineEntry _entry;
+
+  /// Whether [engine] was evicted (and disposed) after this handle was
+  /// acquired. Acquire again for a live engine.
+  bool get isEvicted => _entry.evicted;
+
+  /// Waits, in FIFO order, for exclusive use of [engine] and returns the
+  /// function that releases it. Call the release exactly once.
+  Future<void Function()> lock() => _entry.lock();
 }
 
 class _EngineEntry {
   _EngineEntry(this.engine);
 
   final Future<LlamaEngine> engine;
+  bool evicted = false;
+  Future<void> _lockTail = Future.value();
+
+  Future<void Function()> lock() async {
+    final previous = _lockTail;
+    final released = Completer<void>();
+    _lockTail = released.future;
+    await previous;
+    return released.complete;
+  }
 }
