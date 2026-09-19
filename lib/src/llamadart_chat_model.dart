@@ -288,7 +288,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         if (toolCalls != null && toolCalls.isNotEmpty) {
           parts.addAll(toolCalls.map((tc) => _toolCallPart(tc, nextCallId)));
         } else if (content != null && content.isNotEmpty) {
-          parts.addAll(_partsFrom(scanner.add(content), nextCallId, format));
+          parts.addAll(_partsFrom(scanner.add(content), nextCallId));
         }
 
         if (choice.finishReason != null) {
@@ -307,7 +307,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
 
       // Callers read the finish reason off the last result, so the flushed
       // tail repeats it.
-      final rest = _partsFrom(scanner.close(), nextCallId, format);
+      final rest = _partsFrom(scanner.close(), nextCallId);
       if (rest.isNotEmpty) {
         yield ChatResult(
           output: ChatMessage(role: ChatMessageRole.model, parts: rest),
@@ -490,10 +490,15 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     '</tool_call>',
   );
 
+  // Gemma4Handler's envelope (gemma4_handler.dart in llamadart).
+  static const _gemmaEnvelope = ToolCallEnvelope(
+    '<|tool_call>',
+    '<tool_call|>',
+  );
+
   /// Tool-call envelopes each format may write into plain content.
   static final Map<ChatFormat, List<ToolCallEnvelope>> _envelopesByFormat = {
-    // Gemma4Handler extracts tool calls from the full output itself.
-    ChatFormat.gemma4: const [],
+    ChatFormat.gemma4: const [_gemmaEnvelope],
     ChatFormat.functionGemma: const [
       ToolCallEnvelope('<start_function_call>', '<end_function_call>'),
     ],
@@ -501,10 +506,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     ChatFormat.deepseekV3: const [_hermesEnvelope],
   };
 
-  static const _defaultEnvelopes = [
-    _hermesEnvelope,
-    ToolCallEnvelope('<|tool_call>', '<|tool_call|>'),
-  ];
+  static const _defaultEnvelopes = [_hermesEnvelope, _gemmaEnvelope];
 
   @visibleForTesting
   static List<ToolCallEnvelope> toolCallEnvelopes(ChatFormat format) =>
@@ -513,92 +515,92 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   List<Part> _partsFrom(
     List<ScanSegment> segments,
     String Function() nextCallId,
-    ChatFormat format,
   ) => [
     for (final segment in segments)
       switch (segment) {
         TextSegment(:final text) => TextPart(text),
-        EnvelopeSegment(:final body) => _parseToolCall(
-          body,
-          nextCallId(),
-          format,
-        ),
+        // An envelope that doesn't parse stays text: yielding a fake tool
+        // call would have dartantic try to run a tool that doesn't exist.
+        EnvelopeSegment(:final envelope, :final body) =>
+          parseToolCallBody(body, nextCallId) ??
+              TextPart('${envelope.open}$body${envelope.close}'),
       },
   ];
 
-  ToolPart _parseToolCall(String content, String callId, ChatFormat format) {
+  static final _gemmaCall = RegExp(r'^call:(\w+)\{(.*)\}$', dotAll: true);
+  static final _gemmaArg = RegExp(
+    r'(\w+):(?:<\|\\?"\|>(.*?)<\|\\?"\|>|([^,}]+))',
+    dotAll: true,
+  );
+
+  /// Parses the body of a tool-call envelope, or returns null when it isn't a
+  /// tool call.
+  ///
+  /// Accepts Gemma's `call:name{key:value,...}` and these JSON shapes, in
+  /// order: `{"name", "arguments": {...} | "<json>"}` (Hermes/Qwen),
+  /// `{"name", "parameters": {...}}`, and the single-key `{"<tool>": {...}}`.
+  @visibleForTesting
+  static ToolPart? parseToolCallBody(
+    String body,
+    String Function() nextCallId,
+  ) {
+    final trimmed = body.trim();
+    final gemma = _gemmaCall.firstMatch(trimmed);
+    if (gemma != null) {
+      return ToolPart.call(
+        callId: nextCallId(),
+        toolName: gemma.group(1)!,
+        arguments: {
+          for (final arg in _gemmaArg.allMatches(gemma.group(2)!))
+            arg.group(1)!: arg.group(2) ?? _castValue(arg.group(3)!.trim()),
+        },
+      );
+    }
+
+    final Object? json;
     try {
-      try {
-        final json = jsonDecode(content) as Map<String, dynamic>;
-        final toolName = json.keys.first;
-        final parameters = (json[toolName] as Map<String, dynamic>?) ?? {};
-        return ToolPart.call(
-          callId: callId,
-          toolName: toolName,
-          arguments: parameters,
-        );
-      } catch (_) {}
+      json = jsonDecode(trimmed);
+    } on FormatException {
+      return null;
+    }
+    if (json is! Map<String, dynamic>) return null;
 
-      final formatStr = format.name;
-      final isGemma4 = formatStr.contains('gemma4');
+    final (name, arguments) = switch (json) {
+      {'name': final String name, 'arguments': final Map<String, dynamic> a} =>
+        (name, a),
+      {'name': final String name, 'arguments': final String a} => (
+        name,
+        _decodeObject(a),
+      ),
+      {'name': final String name, 'parameters': final Map<String, dynamic> a} =>
+        (name, a),
+      _ when json.length == 1 && json.values.single is Map<String, dynamic> => (
+        json.keys.single,
+        json.values.single as Map<String, dynamic>,
+      ),
+      _ => (null, null),
+    };
+    if (name == null || arguments == null) return null;
+    return ToolPart.call(
+      callId: nextCallId(),
+      toolName: name,
+      arguments: arguments,
+    );
+  }
 
-      if (isGemma4) {
-        final callPattern = RegExp(r'^call:(\w+)\{(.+)\}$');
-        final match = callPattern.firstMatch(content.trim());
-        if (match != null) {
-          final toolName = match.group(1)!;
-          final argsString = match.group(2)!;
-
-          final argsPattern = RegExp(
-            r'(\w+):(?:<\|"\|>([^<]*)<\|"\|>|([^,}]+))',
-          );
-          final arguments = <String, dynamic>{};
-
-          for (final argMatch in argsPattern.allMatches(argsString)) {
-            final key = argMatch.group(1)!;
-            final value =
-                (argMatch.group(2) ?? argMatch.group(3))?.trim() ?? '';
-            final cleanValue = value
-                .replaceAll('<|"|>', '')
-                .replaceAll('"', '')
-                .trim();
-            if (cleanValue.isEmpty) continue;
-            arguments[key] = _castValue(cleanValue);
-          }
-
-          return ToolPart.call(
-            callId: callId,
-            toolName: toolName,
-            arguments: arguments,
-          );
-        }
-      }
-
-      final json = jsonDecode(content) as Map<String, dynamic>;
-      final toolName = json.keys.first;
-      final parameters = (json[toolName] as Map<String, dynamic>?) ?? {};
-      return ToolPart.call(
-        callId: callId,
-        toolName: toolName,
-        arguments: parameters,
-      );
-    } catch (e) {
-      return ToolPart.call(
-        callId: callId,
-        toolName: 'error',
-        arguments: {'error': 'Invalid tool call format: $content'},
-      );
+  static Map<String, dynamic>? _decodeObject(String source) {
+    try {
+      final decoded = jsonDecode(source);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null;
     }
   }
 
-  dynamic _castValue(String v) {
+  static Object _castValue(String v) {
     if (v == 'true') return true;
     if (v == 'false') return false;
-    final intVal = int.tryParse(v);
-    if (intVal != null) return intVal;
-    final doubleVal = double.tryParse(v);
-    if (doubleVal != null) return doubleVal;
-    return v;
+    return int.tryParse(v) ?? double.tryParse(v) ?? v;
   }
 
   @visibleForTesting

@@ -104,6 +104,72 @@ void main() {
       expect(parts.whereType<ToolPart>(), isEmpty);
     });
 
+    test('parses the Hermes {name, arguments} shape', () async {
+      final parts = await run([
+        '<tool_call>{"name": "get_weather", "arguments": {"city": "Paris"}}'
+            '</tool_call>',
+      ]);
+
+      final call = parts.whereType<ToolPart>().single;
+      expect(call.toolName, 'get_weather');
+      expect(call.arguments, {'city': 'Paris'});
+    });
+
+    test('decodes arguments given as a JSON string', () async {
+      final parts = await run([
+        r'<tool_call>{"name": "get_weather", "arguments": "{\"city\": \"Paris\"}"}'
+            '</tool_call>',
+      ]);
+
+      expect(parts.whereType<ToolPart>().single.arguments, {'city': 'Paris'});
+    });
+
+    test('parses a Gemma call expression', () async {
+      factory.metadata = {
+        'tokenizer.chat_template': '<|turn>{{ messages }}<turn|>',
+      };
+      final parts = await run([
+        'Checking. <|tool_call>call:get_weather{city:<|"|>Paris<|"|>,',
+        'days:3}<tool_call|>',
+      ]);
+
+      expect(_text(parts), 'Checking. ');
+      final call = parts.whereType<ToolPart>().single;
+      expect(call.toolName, 'get_weather');
+      expect(call.arguments, {'city': 'Paris', 'days': 3});
+    });
+
+    test('keeps an envelope that is not a tool call as text', () async {
+      final parts = await run(['<tool_call>not json</tool_call>']);
+
+      expect(_text(parts), '<tool_call>not json</tool_call>');
+      expect(parts.whereType<ToolPart>(), isEmpty);
+    });
+
+    test('with tools, yields a native call once despite a raw envelope in '
+        'content', () async {
+      factory.onCreate = (engine) => engine.enqueue(
+        FakeGeneration([
+          textChunk('<tool_call>{"name": "get_weather", "arguments": {}}'),
+          textChunk('</tool_call>'),
+          toolCallChunk(id: 'call_1', name: 'get_weather', arguments: '{}'),
+        ]),
+      );
+      final parts = await _collectParts(
+        _model(
+          tools: [
+            Tool<Map<String, dynamic>>(
+              name: 'get_weather',
+              description: 'Weather for a city',
+              onCall: (_) => {},
+            ),
+          ],
+        ).sendStream([ChatMessage.user('hi')]),
+      );
+
+      expect(parts.whereType<ToolPart>().single.callId, 'call_1');
+    });
+
     test('does not scan content when tools went to the engine', () async {
       final parts = await run(
         ['<tool_call>{"get_weather": {}}</tool_call>'],
