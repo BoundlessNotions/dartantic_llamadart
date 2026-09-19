@@ -1,5 +1,13 @@
 ## Unreleased
 
+- `outputSchema` goes to llamadart's public `responseFormat` (JSON schema)
+  instead of a GBNF grammar built through a `package:llamadart/src/` import.
+  Behavior change: a schema llamadart can't convert now fails the request
+  instead of silently generating unconstrained output. LiteRT-LM still gets
+  no constraint (best-effort JSON), since llamadart rejects a strict
+  response format on backends without grammar support.
+  `LlamadartChatModel.grammarForSchema` and the `grammar` argument of
+  `buildGenerationParams` are removed.
 - `ChatResult.finishReason` is populated: llamadart's `stop` and `tool_calls`
   map to `FinishReason.stop` and `FinishReason.toolCalls`. The chat format is
   detected once per loaded engine instead of on every call.

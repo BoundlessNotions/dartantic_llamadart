@@ -2,11 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:llamadart/llamadart.dart';
-// Not exported from llamadart's public barrel; the exact version pin in
-// pubspec makes the src import stable. TODO(llamadart): ask upstream to
-// export JsonSchemaConverter.
-// ignore: implementation_imports
-import 'package:llamadart/src/core/grammar/json_schema_converter.dart';
 import 'package:meta/meta.dart';
 
 import 'llama_engine_cache.dart';
@@ -49,19 +44,22 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     );
   }
 
-  /// Converts a dartantic [Schema] into a GBNF grammar for constrained
-  /// decoding, or null when the schema can't be converted or the backend
-  /// (LiteRT-LM) doesn't support grammar constraints.
+  /// The `responseFormat` that constrains output to [schema], or null.
+  ///
+  /// llamadart turns a JSON-schema response format into a grammar on
+  /// llama.cpp and throws on schema keywords it can't convert. LiteRT-LM has
+  /// no grammar constraints and llamadart rejects a strict response format
+  /// there, so on that backend output is best effort: the schema is dropped.
   @visibleForTesting
-  static String? grammarForSchema(Schema? schema, {required bool isLiteRtLm}) {
+  static Map<String, dynamic>? responseFormatFor(
+    Schema? schema, {
+    required bool isLiteRtLm,
+  }) {
     if (schema == null || isLiteRtLm) return null;
-    try {
-      final map = jsonDecode(schema.toJson()) as Map<String, dynamic>;
-      return JsonSchemaConverter.convert(map);
-    } catch (_) {
-      // Unconvertible schema — generate unconstrained rather than fail.
-      return null;
-    }
+    return {
+      'type': 'json_schema',
+      'json_schema': {'schema': jsonDecode(schema.toJson())},
+    };
   }
 
   /// Builds [GenerationParams] from [options], honoring backend capabilities.
@@ -70,13 +68,11 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   /// throws on llama.cpp-specific knobs (`minP`, `penalty`) whose values differ
   /// from the [GenerationParams] defaults. When [isLiteRtLm] is true those
   /// fields are left at their defaults so the runtime accepts the request;
-  /// GGUF/llama.cpp receives the full set. [grammar] (from [grammarForSchema])
-  /// constrains decoding to schema-shaped output on grammar-capable backends.
+  /// GGUF/llama.cpp receives the full set.
   @visibleForTesting
   GenerationParams buildGenerationParams(
     LlamadartChatOptions options, {
     required bool isLiteRtLm,
-    String? grammar,
   }) {
     const genDefaults = GenerationParams();
 
@@ -87,7 +83,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final useGgufMtp = !isLiteRtLm && mtpDraft != null && mtpDraft.isNotEmpty;
 
     return GenerationParams(
-      grammar: grammar,
       temp: options.temp ?? 0.8,
       topK: options.topK ?? 40,
       topP: options.topP ?? 0.9,
@@ -246,16 +241,9 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // bundles while GGUF keeps the full sampler controls.
     final isLiteRtLm = provider.modelPath.toLowerCase().endsWith('.litertlm');
 
-    // Structured output: constrain decoding to the caller's schema via GBNF
-    // grammar sampling (llama.cpp). Template-generated tool-call grammars take
-    // precedence inside the engine, so this applies when the caller wants raw
-    // schema-shaped JSON rather than a tool call.
-    final grammar = grammarForSchema(outputSchema, isLiteRtLm: isLiteRtLm);
-
     final params = buildGenerationParams(
       effectiveOptions,
       isLiteRtLm: isLiteRtLm,
-      grammar: grammar,
     );
 
     // Tag errors that come out of the engine, so a bug in this adapter's own
@@ -266,6 +254,10 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           llamaMessages,
           enableThinking: true,
           params: params,
+          responseFormat: responseFormatFor(
+            outputSchema,
+            isLiteRtLm: isLiteRtLm,
+          ),
           tools: llamadartTools,
           toolChoice: llamadartTools != null && llamadartTools.isNotEmpty
               ? ToolChoice.auto

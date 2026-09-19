@@ -505,4 +505,45 @@ void main() {
       expect(results.last.finishReason, FinishReason.stop);
     });
   });
+
+  group('structured output', () {
+    final schema = Schema.fromMap({
+      'type': 'object',
+      'properties': {
+        'ok': {'type': 'boolean'},
+      },
+      'required': ['ok'],
+    });
+
+    test('sends a json_schema responseFormat on GGUF', () async {
+      await _collectParts(
+        _model().sendStream([ChatMessage.user('1')], outputSchema: schema),
+      );
+
+      final call = factory.last.createCalls.single;
+      expect(call.responseFormat, {
+        'type': 'json_schema',
+        'json_schema': {
+          'schema': {
+            'type': 'object',
+            'properties': {
+              'ok': {'type': 'boolean'},
+            },
+            'required': ['ok'],
+          },
+        },
+      });
+      expect(call.params!.grammar, isNull);
+    });
+
+    test('sends no responseFormat on LiteRT-LM', () async {
+      await _collectParts(
+        _model(
+          modelPath: '/models/fake.litertlm',
+        ).sendStream([ChatMessage.user('1')], outputSchema: schema),
+      );
+
+      expect(factory.last.createCalls.single.responseFormat, isNull);
+    });
+  });
 }
