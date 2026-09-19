@@ -3,6 +3,7 @@ import 'llamadart_chat_options.dart';
 import 'llamadart_chat_model.dart';
 import 'llamadart_embeddings_model.dart';
 
+/// A dartantic provider for local models run through llamadart.
 class LlamadartProvider
     extends
         Provider<
@@ -10,12 +11,18 @@ class LlamadartProvider
           EmbeddingsModelOptions,
           MediaGenerationModelOptions
         > {
+  /// The chat model: a `.gguf` file or a `.litertlm` bundle.
   final String modelPath;
+
+  /// An embedding GGUF for [createEmbeddingsModel], or null when this
+  /// provider doesn't do embeddings.
+  final String? embeddingsModelPath;
 
   LlamadartProvider({
     required super.name,
     required super.displayName,
     required this.modelPath,
+    this.embeddingsModelPath,
     super.defaultModelNames = const {},
     super.headers = const {},
   });
@@ -39,6 +46,13 @@ class LlamadartProvider
       providerName: name,
       kinds: {ModelKind.chat},
     );
+    if (embeddingsModelPath != null) {
+      yield ModelInfo(
+        name: defaultModelNames[ModelKind.embeddings] ?? 'default',
+        providerName: name,
+        kinds: {ModelKind.embeddings},
+      );
+    }
   }
 
   @override
@@ -67,10 +81,15 @@ class LlamadartProvider
     String? name,
     EmbeddingsModelOptions? options,
   }) {
-    final modelName =
-        name ?? defaultModelNames[ModelKind.embeddings] ?? 'default';
+    final path = embeddingsModelPath;
+    if (path == null) {
+      throw StateError(
+        'LlamadartProvider "${this.name}" has no embeddingsModelPath',
+      );
+    }
     return LlamadartEmbeddingsModel(
-      name: modelName,
+      modelPath: path,
+      name: name ?? defaultModelNames[ModelKind.embeddings] ?? 'default',
       defaultOptions: options ?? const EmbeddingsModelOptions(),
     );
   }

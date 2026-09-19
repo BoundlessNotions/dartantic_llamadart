@@ -168,7 +168,12 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
 
     // Generations on a shared engine are serialized; the lock is released
     // however this stream ends.
-    final (handle, release) = await _lockEngine();
+    // Acquire per call rather than holding the engine: another model sharing
+    // it may have evicted it, and the cache then loads a fresh one.
+    final (handle, release) = await LlamaEngineCache.instance.acquireExclusive(
+      provider.modelPath,
+      _modelParams(),
+    );
     try {
       if (state.cancelled) return;
       yield* _generate(state, handle, messages, effectiveOptions, outputSchema);
@@ -193,22 +198,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       false,
     _ => true,
   };
-
-  /// Acquires the shared engine and waits for exclusive use of it.
-  Future<(LlamaEngineHandle, void Function())> _lockEngine() async {
-    while (true) {
-      // Acquire per call rather than holding the engine: another model
-      // sharing it may have evicted it, and the cache then loads a fresh one.
-      final handle = await LlamaEngineCache.instance.acquire(
-        provider.modelPath,
-        _modelParams(),
-      );
-      final release = await handle.lock();
-      // The holder ahead of us may have evicted it after a failed generation.
-      if (!handle.isEvicted) return (handle, release);
-      release();
-    }
-  }
 
   Stream<ChatResult<ChatMessage>> _generate(
     _GenerationState state,

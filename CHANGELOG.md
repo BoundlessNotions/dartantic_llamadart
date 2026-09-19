@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Embeddings are implemented. Give `LlamadartProvider` an
+  `embeddingsModelPath` (an embedding GGUF, e.g. EmbeddingGemma) and
+  `createEmbeddingsModel` returns a model backed by llamadart's
+  `embed`/`embedBatch`; `embedDocuments` chunks by `batchSize`, which also
+  sets the engine's parallel sequence count. A `dimensions` value that
+  differs from the model's vector size throws `ArgumentError`.
+  `createEmbeddingsModel` throws `StateError` when no embeddings model is
+  configured, and `listModels` advertises embeddings only when one is.
 - `enableThinking` passed to `createChatModel` is honored (it was dropped,
   and generation always ran with thinking on). Behavior change: it defaults
   to false, so thinking-capable models don't reason unless asked.
