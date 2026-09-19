@@ -57,6 +57,7 @@ class LlamadartProvider
       defaultOptions: (options ?? const LlamadartChatOptions()).copyWith(
         temp: temperature,
       ),
+      enableThinking: enableThinking,
     );
   }
 

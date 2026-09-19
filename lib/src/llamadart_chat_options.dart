@@ -142,4 +142,67 @@ class LlamadartChatOptions extends ChatModelOptions {
       mtpDraftTokenMax: mtpDraftTokenMax ?? this.mtpDraftTokenMax,
     );
   }
+
+  /// These options with the non-null sampling fields of [perCall] on top.
+  ///
+  /// Load-time fields (context size, GPU layers, backends, chat template, MTP
+  /// drafter) pick the engine when the model loads, so a per-call value can't
+  /// take effect. One that differs from these options throws [ArgumentError]
+  /// rather than being ignored. The backend enums count as unset at their
+  /// `auto` default, since a per-call options object always carries one.
+  LlamadartChatOptions mergedWith(LlamadartChatOptions? perCall) {
+    if (perCall == null) return this;
+
+    void checkLoadTime(String field, Object? value, Object? current) {
+      if (value != null && value != current) {
+        throw ArgumentError.value(
+          value,
+          field,
+          'is fixed when the model loads (currently $current); set it on the '
+          'default options instead of per call',
+        );
+      }
+    }
+
+    checkLoadTime('nCtx', perCall.nCtx, nCtx);
+    checkLoadTime('nGpuLayers', perCall.nGpuLayers, nGpuLayers);
+    checkLoadTime('chatTemplate', perCall.chatTemplate, chatTemplate);
+    checkLoadTime(
+      'mtpDraftModelPath',
+      perCall.mtpDraftModelPath,
+      mtpDraftModelPath,
+    );
+    checkLoadTime(
+      'mtpDraftTokenMax',
+      perCall.mtpDraftTokenMax,
+      mtpDraftTokenMax,
+    );
+    checkLoadTime(
+      'preferredBackend',
+      perCall.preferredBackend == GpuBackend.auto
+          ? null
+          : perCall.preferredBackend,
+      preferredBackend,
+    );
+    checkLoadTime(
+      'liteRtLmBackend',
+      perCall.liteRtLmBackend == LiteRtLmBackendPreference.auto
+          ? null
+          : perCall.liteRtLmBackend,
+      liteRtLmBackend,
+    );
+
+    return copyWith(
+      temp: perCall.temp,
+      topK: perCall.topK,
+      topP: perCall.topP,
+      repeatPenalty: perCall.repeatPenalty,
+      minP: perCall.minP,
+      maxTokens: perCall.maxTokens,
+      streamBatchTokenThreshold: perCall.streamBatchTokenThreshold,
+      streamBatchByteThreshold: perCall.streamBatchByteThreshold,
+      reusePromptPrefix: perCall.reusePromptPrefix,
+      speculativeDecoding: perCall.speculativeDecoding,
+    );
+  }
 }

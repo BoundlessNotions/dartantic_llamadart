@@ -32,6 +32,46 @@ void main() {
     });
   });
 
+  group('LlamadartChatOptions.mergedWith', () {
+    const defaults = LlamadartChatOptions(
+      nCtx: 4096,
+      temp: 0.7,
+      topK: 20,
+      maxTokens: 256,
+      preferredBackend: GpuBackend.vulkan,
+    );
+
+    test('keeps defaults the per-call options leave unset', () {
+      final merged = defaults.mergedWith(const LlamadartChatOptions(temp: 0.2));
+
+      expect(merged.temp, 0.2);
+      expect(merged.topK, 20);
+      expect(merged.maxTokens, 256);
+      expect(merged.nCtx, 4096);
+      expect(merged.preferredBackend, GpuBackend.vulkan);
+    });
+
+    test('rejects a per-call load-time field that differs', () {
+      expect(
+        () => defaults.mergedWith(const LlamadartChatOptions(nCtx: 1024)),
+        throwsArgumentError,
+      );
+      expect(
+        () => defaults.mergedWith(
+          const LlamadartChatOptions(preferredBackend: GpuBackend.cpu),
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('accepts a per-call load-time field equal to the default', () {
+      expect(
+        defaults.mergedWith(const LlamadartChatOptions(nCtx: 4096)).nCtx,
+        4096,
+      );
+    });
+  });
+
   group('LlamadartProvider', () {
     test('initializes correctly', () {
       final provider = LlamadartProvider(
@@ -335,6 +375,39 @@ void main() {
       final gguf = model.buildGenerationParams(options, isLiteRtLm: false);
       expect(gguf.minP, 0.05);
       expect(gguf.penalty, 1.15);
+    });
+
+    test('buildGenerationParams keeps default topK under a per-call temp', () {
+      final params = model.buildGenerationParams(
+        const LlamadartChatOptions(
+          topK: 7,
+        ).mergedWith(const LlamadartChatOptions(temp: 0.2)),
+        isLiteRtLm: false,
+      );
+
+      expect(params.temp, 0.2);
+      expect(params.topK, 7);
+    });
+
+    test('buildGenerationParams passes the streaming knobs through', () {
+      const defaults = GenerationParams();
+      final unset = model.buildGenerationParams(
+        const LlamadartChatOptions(),
+        isLiteRtLm: false,
+      );
+      expect(unset.reusePromptPrefix, defaults.reusePromptPrefix);
+
+      final set = model.buildGenerationParams(
+        LlamadartChatOptions(
+          reusePromptPrefix: !defaults.reusePromptPrefix,
+          streamBatchTokenThreshold: 3,
+          streamBatchByteThreshold: 5,
+        ),
+        isLiteRtLm: false,
+      );
+      expect(set.reusePromptPrefix, !defaults.reusePromptPrefix);
+      expect(set.streamBatchTokenThreshold, 3);
+      expect(set.streamBatchByteThreshold, 5);
     });
 
     test('buildGenerationParams maps an MTP draft path to a GGUF spec config', () {
