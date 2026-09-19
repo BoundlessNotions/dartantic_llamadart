@@ -377,6 +377,16 @@ void main() {
       expect(gguf.penalty, 1.15);
     });
 
+    test('buildGenerationParams leaves maxTokens at llamadart\'s default', () {
+      final params = model.buildGenerationParams(
+        const LlamadartChatOptions(),
+        isLiteRtLm: false,
+      );
+
+      expect(params.maxTokens, const GenerationParams().maxTokens);
+      expect(params.maxTokens, greaterThan(0));
+    });
+
     test('buildGenerationParams keeps default topK under a per-call temp', () {
       final params = model.buildGenerationParams(
         const LlamadartChatOptions(
