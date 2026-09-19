@@ -12,5 +12,9 @@ dependencies:
   meta: ^1.11.0
 
 dev_dependencies:
+  # Not imported. Raises the floor of a test runner dependency: 3.x looks for
+  # the JIT frontend_server snapshot, which current Dart SDKs no longer ship,
+  # so `dart test` fails after `dart pub downgrade` without it.
+  frontend_server_client: ^4.0.0
   lints: ^6.1.0
-  test: ^1.24.0
+  test: ^1.32.0
