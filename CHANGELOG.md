@@ -1,3 +1,14 @@
+## Unreleased
+
+- System messages now reach the model. `sendStream` went through llamadart's
+  `ChatSession`, which filters system-role messages out of its history, so
+  every `ChatMessage.system` was dropped before the prompt was rendered. The
+  full converted message list now goes to `LlamaEngine.create`. Behavior
+  change: `ChatSession` also dropped the oldest turns when the rendered prompt
+  overflowed the context. That trimming is gone, and an over-long prompt now
+  fails with `LlamaInferenceException`. Compact the history in the caller, as
+  with hosted providers.
+
 ## 0.6.9
 
 - Upgraded dependencies: `llamadart` to `0.8.17` (was `0.8.4`), `dartantic_interface`
