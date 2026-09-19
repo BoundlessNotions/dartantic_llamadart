@@ -94,7 +94,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
           ? genDefaults.penalty
           : (options.repeatPenalty ?? 1.1),
       minP: isLiteRtLm ? genDefaults.minP : (options.minP ?? 0.05),
-      maxTokens: options.maxTokens ?? 0,
+      // llama.cpp generates exactly this many tokens at most; 0 yields none.
+      maxTokens: options.maxTokens ?? genDefaults.maxTokens,
       reusePromptPrefix:
           options.reusePromptPrefix ?? genDefaults.reusePromptPrefix,
       streamBatchTokenThreshold:

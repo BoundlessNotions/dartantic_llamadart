@@ -1,5 +1,8 @@
 ## Unreleased
 
+- A request that didn't set `maxTokens` generated nothing: the value passed
+  to llamadart fell back to 0, and llama.cpp's loop generates exactly that
+  many tokens. It now falls back to `GenerationParams`' default.
 - Embeddings are implemented. Give `LlamadartProvider` an
   `embeddingsModelPath` (an embedding GGUF, e.g. EmbeddingGemma) and
   `createEmbeddingsModel` returns a model backed by llamadart's
