@@ -1,5 +1,11 @@
 ## Unreleased
 
+- After a failed generation evicted the shared engine, other chat models on
+  the same model kept calling the disposed engine. Chat models no longer hold
+  an engine; they acquire from `LlamaEngineCache` on every call. Breaking:
+  `LlamaEngineCache.acquire` returns a `LlamaEngineHandle` (with `.engine`)
+  instead of the engine, and `evict` takes that handle instead of a key, so a
+  late evict can't dispose a replacement engine.
 - `sendStream` no longer emits every plain-text reply twice. Each content
   delta was yielded and also kept in a buffer that was flushed again after the
   stream ended, and dartantic concatenates streamed `TextPart`s. Content is
