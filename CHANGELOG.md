@@ -1,5 +1,11 @@
 ## Unreleased
 
+- The text tool-call fallback (used when no tools are passed, e.g.
+  prompt-instructed calls) accepts the Hermes/Qwen `{"name", "arguments"}`
+  shape (arguments as an object or a JSON string), `{"name", "parameters"}`,
+  and Gemma's `<|tool_call>call:name{...}<tool_call|>`. An envelope that
+  doesn't parse is kept as text instead of becoming a tool call named
+  `error`.
 - `outputSchema` goes to llamadart's public `responseFormat` (JSON schema)
   instead of a GBNF grammar built through a `package:llamadart/src/` import.
   Behavior change: a schema llamadart can't convert now fails the request
