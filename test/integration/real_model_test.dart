@@ -1,0 +1,101 @@
+@Tags(['integration'])
+library;
+
+import 'dart:io';
+
+import 'package:dartantic_interface/dartantic_interface.dart';
+import 'package:dartantic_llamadart/dartantic_llamadart.dart';
+import 'package:llamadart/llamadart.dart';
+import 'package:test/test.dart';
+
+/// A real engine that records what `create` received and streamed, so tests
+/// can compare the adapter's output with the engine's.
+class RecordingEngine extends LlamaEngine {
+  RecordingEngine() : super(LlamaBackend());
+
+  final List<List<LlamaChatMessage>> requests = [];
+  final StringBuffer streamedContent = StringBuffer();
+
+  @override
+  Stream<LlamaCompletionChunk> create(
+    List<LlamaChatMessage> messages, {
+    GenerationParams? params,
+    List<ToolDefinition>? tools,
+    ToolChoice? toolChoice,
+    bool parallelToolCalls = false,
+    bool enableThinking = true,
+    Map<String, dynamic>? responseFormat,
+    String? sourceLangCode,
+    String? targetLangCode,
+    Map<String, dynamic>? chatTemplateKwargs,
+    DateTime? templateNow,
+  }) async* {
+    requests.add(List.of(messages));
+    await for (final chunk in super.create(
+      messages,
+      params: params,
+      tools: tools,
+      toolChoice: toolChoice,
+      parallelToolCalls: parallelToolCalls,
+      enableThinking: enableThinking,
+      responseFormat: responseFormat,
+      sourceLangCode: sourceLangCode,
+      targetLangCode: targetLangCode,
+      chatTemplateKwargs: chatTemplateKwargs,
+      templateNow: templateNow,
+    )) {
+      streamedContent.write(chunk.choices.firstOrNull?.delta.content ?? '');
+      yield chunk;
+    }
+  }
+}
+
+/// Runs against a small instruct GGUF (SmolLM2-135M-Instruct Q4_K_M works) set
+/// in `LLAMADART_TEST_MODEL`. Run with `dart test -P integration`.
+void main() {
+  final modelPath = Platform.environment['LLAMADART_TEST_MODEL'];
+  final skip = modelPath == null || modelPath.isEmpty
+      ? 'LLAMADART_TEST_MODEL is not set'
+      : null;
+
+  late RecordingEngine engine;
+
+  setUp(() {
+    LlamaEngineCache.instance.engineFactory = () => engine = RecordingEngine();
+  });
+
+  tearDown(() async {
+    await LlamaEngineCache.instance.disposeAll();
+    LlamaEngineCache.instance.engineFactory =
+        LlamaEngineCache.defaultEngineFactory;
+  });
+
+  LlamadartChatModel model() =>
+      LlamadartProvider(
+            name: 'llamadart',
+            displayName: 'Local Llama',
+            modelPath: modelPath!,
+          ).createChatModel(
+            options: const LlamadartChatOptions(
+              nCtx: 1024,
+              nGpuLayers: 0,
+              maxTokens: 24,
+              temp: 0,
+            ),
+          )
+          as LlamadartChatModel;
+
+  test('streams a reply from a real model', () async {
+    final texts = <String>[];
+    await for (final result in model().sendStream([
+      ChatMessage.user('Say hello in five words.'),
+    ])) {
+      texts.addAll(
+        result.output.parts.whereType<TextPart>().map((p) => p.text),
+      );
+    }
+
+    expect(texts.join(), isNotEmpty);
+    expect(engine.streamedContent.toString(), isNotEmpty);
+  }, skip: skip);
+}
