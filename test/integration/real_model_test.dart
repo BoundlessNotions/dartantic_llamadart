@@ -98,4 +98,16 @@ void main() {
     expect(texts.join(), isNotEmpty);
     expect(engine.streamedContent.toString(), isNotEmpty);
   }, skip: skip);
+
+  test('a system prompt reaches the real engine', () async {
+    await model().sendStream([
+      ChatMessage.system('Answer in French.'),
+      ChatMessage.user('Say hello.'),
+    ]).drain<void>();
+
+    expect(engine.requests.single.map((m) => m.role), [
+      LlamaChatRole.system,
+      LlamaChatRole.user,
+    ]);
+  }, skip: skip);
 }

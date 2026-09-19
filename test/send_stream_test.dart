@@ -1,5 +1,6 @@
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
+import 'package:llamadart/llamadart.dart' show LlamaChatRole;
 import 'package:test/test.dart';
 
 import 'support/fake_llama_engine.dart';
@@ -95,5 +96,91 @@ void main() {
     expect(calls.single.callId, 'call_1');
     expect(calls.single.toolName, 'get_weather');
     expect(calls.single.arguments, {'city': 'Paris'});
+  });
+
+  group('message list', () {
+    test('system and user messages both reach engine.create', () async {
+      final model = _model();
+      await _collectParts(
+        model.sendStream([
+          ChatMessage.system('Be terse.'),
+          ChatMessage.user('hi'),
+        ]),
+      );
+
+      final call = factory.last.createCalls.single;
+      expect(call.messages.map((m) => m.role), [
+        LlamaChatRole.system,
+        LlamaChatRole.user,
+      ]);
+      expect(call.messages.first.content, 'Be terse.');
+    });
+
+    test('a trailing tool result is the last message sent', () async {
+      final model = _model();
+      await _collectParts(
+        model.sendStream([
+          ChatMessage.user('weather?'),
+          ChatMessage(
+            role: ChatMessageRole.model,
+            parts: [
+              ToolPart.call(
+                callId: 'call_1',
+                toolName: 'get_weather',
+                arguments: {'city': 'Paris'},
+              ),
+            ],
+          ),
+          ChatMessage(
+            role: ChatMessageRole.user,
+            parts: [
+              ToolPart.result(
+                callId: 'call_1',
+                toolName: 'get_weather',
+                result: {'temp': 20},
+              ),
+            ],
+          ),
+        ]),
+      );
+
+      final call = factory.last.createCalls.single;
+      expect(call.messages.map((m) => m.role), [
+        LlamaChatRole.user,
+        LlamaChatRole.assistant,
+        LlamaChatRole.tool,
+      ]);
+    });
+
+    test('the FunctionGemma trigger reaches the system message', () async {
+      factory.metadata = {
+        'tokenizer.chat_template': '<start_function_call>{{ messages }}',
+      };
+      final model = _model(
+        tools: [
+          Tool<Map<String, dynamic>>(
+            name: 'get_weather',
+            description: 'Weather for a city',
+            onCall: (_) => {},
+          ),
+        ],
+      );
+      await _collectParts(
+        model.sendStream([
+          ChatMessage.system('Be terse.'),
+          ChatMessage.user('hi'),
+        ]),
+      );
+
+      final system = factory.last.createCalls.single.messages.first;
+      expect(system.role, LlamaChatRole.system);
+      expect(
+        system.content,
+        startsWith(
+          'You are a model that can do function calling with the following '
+          'functions',
+        ),
+      );
+    });
   });
 }

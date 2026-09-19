@@ -19,7 +19,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   final List<Tool<Object>>? tools;
 
   LlamaEngine? _engine;
-  ChatSession? _session;
   String? _engineCacheKey;
 
   LlamadartChatModel({
@@ -51,13 +50,11 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
 
     // Engines are cached process-wide: model load (weights + graph compile +
     // context allocation) is paid once per (path, params), not per chat model.
-    // Sessions stay per-model — they are cheap Dart-side history wrappers.
     _engineCacheKey = LlamaEngineCache.keyFor(provider.modelPath, params);
     _engine = await LlamaEngineCache.instance.acquire(
       provider.modelPath,
       params,
     );
-    _session = ChatSession(_engine!);
   }
 
   /// Evicts the shared engine so the next call reloads a clean one.
@@ -72,7 +69,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       await LlamaEngineCache.instance.evict(key);
     }
     _engine = null;
-    _session = null;
     _engineCacheKey = null;
   }
 
@@ -165,34 +161,15 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final hasTools =
         outputSchema != null || (tools != null && tools!.isNotEmpty);
 
-    _session!.reset();
+    if (messages.isEmpty) return;
 
-    final allMessages = messages.toList();
-    if (allMessages.isEmpty) return;
-
-    final lastMessage = allMessages.removeLast();
-
-    for (final msg in allMessages) {
-      _session!.addMessage(
+    // The whole history goes straight to engine.create. llamadart's
+    // ChatSession drops system-role history messages and has no
+    // responseFormat, and dartantic already owns the conversation.
+    final llamaMessages = [
+      for (final msg in messages)
         toLlamaMessage(msg, format: format, hasTools: hasTools),
-      );
-    }
-
-    // Tool result messages use the 'tool' role, not 'user'. Add them as a
-    // session message so the chat template formats them correctly, then call
-    // create([]) to let the model generate its response.
-    final hasToolResult = lastMessage.parts.any(
-      (p) => p is ToolPart && p.kind == ToolPartKind.result,
-    );
-    final List<LlamaContentPart> contentParts;
-    if (hasToolResult) {
-      _session!.addMessage(
-        toLlamaMessage(lastMessage, format: format, hasTools: hasTools),
-      );
-      contentParts = [];
-    } else {
-      contentParts = _toLlamaContentParts(lastMessage);
-    }
+    ];
 
     final effectiveOptions = options ?? defaultOptions;
     final buffer = StringBuffer();
@@ -216,8 +193,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final grammar = grammarForSchema(outputSchema, isLiteRtLm: isLiteRtLm);
 
     try {
-      await for (final chunk in _session!.create(
-        contentParts,
+      await for (final chunk in _engine!.create(
+        llamaMessages,
         enableThinking: true,
         params: buildGenerationParams(
           effectiveOptions,
@@ -651,10 +628,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     }).toList();
   }
 
-  List<LlamaContentPart> _toLlamaContentParts(ChatMessage msg) {
-    return _toLlamaContentPartsFromList(msg.parts);
-  }
-
   LlamaChatRole _toLlamaRole(ChatMessageRole role) {
     switch (role) {
       case ChatMessageRole.user:
@@ -672,6 +645,5 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // not dispose it here. Use LlamaEngineCache.instance.disposeAll() at app
     // shutdown to release native resources.
     _engine = null;
-    _session = null;
   }
 }

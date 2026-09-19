@@ -128,10 +128,6 @@ class FakeLlamaEngine implements LlamaEngine {
     return metadata;
   }
 
-  // Zero makes ChatSession skip its context-limit trimming.
-  @override
-  Future<int> getContextSize() async => 0;
-
   @override
   void cancelGeneration() {
     cancelCalls++;
@@ -154,6 +150,9 @@ class FakeLlamaEngine implements LlamaEngine {
 /// Points [LlamaEngineCache] at fresh [FakeLlamaEngine]s and records every
 /// engine it builds, in order.
 class FakeEngineFactory {
+  /// Chat template metadata for new engines; null uses [hermesTemplate].
+  Map<String, String>? metadata;
+
   /// Called with each new engine, e.g. to script its generations.
   void Function(FakeLlamaEngine engine)? onCreate;
   final List<FakeLlamaEngine> engines = [];
@@ -162,7 +161,7 @@ class FakeEngineFactory {
 
   void install() {
     LlamaEngineCache.instance.engineFactory = () {
-      final engine = FakeLlamaEngine();
+      final engine = FakeLlamaEngine(metadata: metadata);
       onCreate?.call(engine);
       engines.add(engine);
       return engine;
