@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
 import 'package:llamadart/llamadart.dart'
-    show LlamaChatRole, LlamaInferenceException, LlamaUnsupportedException;
+    show
+        LlamaChatRole,
+        LlamaImageContent,
+        LlamaInferenceException,
+        LlamaUnsupportedException;
 import 'package:test/test.dart';
 
 import 'support/fake_llama_engine.dart';
@@ -651,6 +656,88 @@ void main() {
         ),
         throwsArgumentError,
       );
+    });
+  });
+
+  group('media parts', () {
+    final image = ChatMessage(
+      role: ChatMessageRole.user,
+      parts: [
+        const TextPart('What is this?'),
+        DataPart(Uint8List.fromList([1, 2, 3]), mimeType: 'image/png'),
+      ],
+    );
+
+    test('a GGUF model without a projector rejects an image', () async {
+      await expectLater(
+        _collectParts(_model().sendStream([image])),
+        throwsA(
+          isA<UnsupportedError>().having(
+            (e) => e.message,
+            'message',
+            contains('mmprojPath'),
+          ),
+        ),
+      );
+    });
+
+    test('a loaded projector takes the image', () async {
+      final model = _model(
+        options: const LlamadartChatOptions(mmprojPath: '/models/mmproj.gguf'),
+      );
+
+      await _collectParts(model.sendStream([image]));
+
+      expect(factory.last.loadedMmproj, '/models/mmproj.gguf');
+      final parts = factory.last.createCalls.single.messages.single.parts;
+      expect(parts.last, isA<LlamaImageContent>());
+    });
+
+    test('a projector without audio support rejects audio', () async {
+      factory.onCreate = (engine) => engine.audioCapable = false;
+      final model = _model(
+        options: const LlamadartChatOptions(mmprojPath: '/models/mmproj.gguf'),
+      );
+
+      await expectLater(
+        _collectParts(
+          model.sendStream([
+            ChatMessage(
+              role: ChatMessageRole.user,
+              parts: [DataPart(Uint8List(2), mimeType: 'audio/wav')],
+            ),
+          ]),
+        ),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('LiteRT-LM bundles handle media without a projector', () async {
+      final model = _model(modelPath: '/models/fake.litertlm');
+
+      await _collectParts(model.sendStream([image]));
+
+      expect(factory.last.loadedMmproj, isNull);
+      expect(factory.last.createCalls, hasLength(1));
+    });
+
+    test('the projector is part of the engine cache key', () async {
+      await _collectParts(
+        _model(
+          options: const LlamadartChatOptions(mmprojPath: '/models/a.gguf'),
+        ).sendStream([ChatMessage.user('hi')]),
+      );
+      await _collectParts(
+        _model(
+          options: const LlamadartChatOptions(mmprojPath: '/models/b.gguf'),
+        ).sendStream([ChatMessage.user('hi')]),
+      );
+
+      expect(factory.engines, hasLength(2));
+      expect(factory.engines.map((e) => e.loadedMmproj), [
+        '/models/a.gguf',
+        '/models/b.gguf',
+      ]);
     });
   });
 }

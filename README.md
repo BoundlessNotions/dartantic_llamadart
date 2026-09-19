@@ -55,7 +55,7 @@ sampler:
 
 | Load time | Per request |
 | --- | --- |
-| `nCtx`, `nGpuLayers`, `preferredBackend`, `liteRtLmBackend`, `chatTemplate`, `mtpDraftModelPath`, `mtpDraftTokenMax` | `temp`, `topK`, `topP`, `minP`, `repeatPenalty`, `maxTokens`, `speculativeDecoding`, `reusePromptPrefix`, `streamBatchTokenThreshold`, `streamBatchByteThreshold` |
+| `nCtx`, `nGpuLayers`, `preferredBackend`, `liteRtLmBackend`, `chatTemplate`, `mmprojPath`, `mtpDraftModelPath`, `mtpDraftTokenMax` | `temp`, `topK`, `topP`, `minP`, `repeatPenalty`, `maxTokens`, `speculativeDecoding`, `reusePromptPrefix`, `streamBatchTokenThreshold`, `streamBatchByteThreshold` |
 
 Options passed to a single call are merged over the model's defaults, so
 `LlamadartChatOptions(temp: 0.2)` keeps the default `topK` and the rest. A
@@ -66,6 +66,20 @@ Thinking is off unless asked for: `provider.createChatModel(enableThinking:
 true)` (or `Agent.forProvider(..., enableThinking: true)`). Prior-turn
 reasoning is sent back as thinking content, and each chat template decides
 whether to render or strip it.
+
+## Images and audio
+
+Image and audio parts (`DataPart`, or a `file:`/`http(s)` `LinkPart`) are sent
+as media content. A GGUF model reads them only through a multimodal projector,
+so point `mmprojPath` at the model's mmproj file:
+
+```dart
+const LlamadartChatOptions(mmprojPath: 'models/gemma-3-4b-mmproj-f16.gguf')
+```
+
+Without one, a request carrying media throws `UnsupportedError` rather than
+answering from the text and leaving you to wonder whether the model saw the
+image. LiteRT-LM bundles process media themselves and need no projector.
 
 ## Tools
 

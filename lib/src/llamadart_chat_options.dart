@@ -24,6 +24,13 @@ class LlamadartChatOptions extends ChatModelOptions {
   /// you want to force a specific format (e.g. `'gemma'`).
   final String? chatTemplate;
 
+  /// Path to a multimodal projector (mmproj GGUF) for the model.
+  ///
+  /// llama.cpp needs one to take image or audio parts; without it a GGUF
+  /// model ignores them. LiteRT-LM bundles carry their own media processors
+  /// and don't need this.
+  final String? mmprojPath;
+
   /// The temperature for sampling.
   final double? temp;
 
@@ -84,6 +91,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     this.preferredBackend = GpuBackend.auto,
     this.liteRtLmBackend = LiteRtLmBackendPreference.auto,
     this.chatTemplate,
+    this.mmprojPath,
     this.temp,
     this.topK,
     this.topP,
@@ -105,6 +113,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     LiteRtLmBackendPreference? liteRtLmBackend,
     String? chatTemplate,
     bool clearChatTemplate = false,
+    String? mmprojPath,
     double? temp,
     int? topK,
     double? topP,
@@ -126,6 +135,7 @@ class LlamadartChatOptions extends ChatModelOptions {
       chatTemplate: clearChatTemplate
           ? null
           : (chatTemplate ?? this.chatTemplate),
+      mmprojPath: mmprojPath ?? this.mmprojPath,
       temp: temp ?? this.temp,
       topK: topK ?? this.topK,
       topP: topP ?? this.topP,
@@ -145,8 +155,8 @@ class LlamadartChatOptions extends ChatModelOptions {
 
   /// These options with the non-null sampling fields of [perCall] on top.
   ///
-  /// Load-time fields (context size, GPU layers, backends, chat template, MTP
-  /// drafter) pick the engine when the model loads, so a per-call value can't
+  /// Load-time fields (context size, GPU layers, backends, chat template,
+  /// multimodal projector, MTP drafter) pick the engine when the model loads, so a per-call value can't
   /// take effect. One that differs from these options throws [ArgumentError]
   /// rather than being ignored. The backend enums count as unset at their
   /// `auto` default, since a per-call options object always carries one.
@@ -167,6 +177,7 @@ class LlamadartChatOptions extends ChatModelOptions {
     checkLoadTime('nCtx', perCall.nCtx, nCtx);
     checkLoadTime('nGpuLayers', perCall.nGpuLayers, nGpuLayers);
     checkLoadTime('chatTemplate', perCall.chatTemplate, chatTemplate);
+    checkLoadTime('mmprojPath', perCall.mmprojPath, mmprojPath);
     checkLoadTime(
       'mtpDraftModelPath',
       perCall.mtpDraftModelPath,

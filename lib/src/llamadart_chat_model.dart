@@ -174,6 +174,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final (handle, release) = await LlamaEngineCache.instance.acquireExclusive(
       provider.modelPath,
       _modelParams(),
+      mmprojPath: defaultOptions.mmprojPath,
     );
     try {
       if (state.cancelled) return;
@@ -219,6 +220,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       for (final msg in messages)
         toLlamaMessage(msg, format: format, hasTools: hasTools),
     ];
+    await _rejectUnusableMedia(engine, llamaMessages);
 
     var toolCallIdCounter = 0;
     String nextCallId() => 'call_${toolCallIdCounter++}';
@@ -326,6 +328,35 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       state.engine = null;
       // Don't leave a generation running on the engine the next caller gets.
       if (!completed && !handle.isEvicted) engine.cancelGeneration();
+    }
+  }
+
+  /// Fails a request carrying media the engine would drop on the floor.
+  ///
+  /// llama.cpp only takes image or audio input through a multimodal
+  /// projector, and without one it generates from the text alone rather than
+  /// complaining. LiteRT-LM is excluded: its bundles process media through the
+  /// runtime, with no projector context for `supportsVision` to find.
+  Future<void> _rejectUnusableMedia(
+    LlamaEngine engine,
+    List<LlamaChatMessage> messages,
+  ) async {
+    if (provider.modelPath.toLowerCase().endsWith('.litertlm')) return;
+
+    final parts = messages.expand((message) => message.parts);
+    final media = {
+      if (parts.any((p) => p is LlamaImageContent))
+        'image': engine.supportsVision,
+      if (parts.any((p) => p is LlamaAudioContent))
+        'audio': engine.supportsAudio,
+    };
+    for (final entry in media.entries) {
+      if (await entry.value) continue;
+      throw UnsupportedError(
+        'This model takes no ${entry.key} input: no multimodal projector is '
+        'loaded. Set LlamadartChatOptions.mmprojPath to the model\'s mmproj '
+        'file.',
+      );
     }
   }
 
