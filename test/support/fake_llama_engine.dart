@@ -51,6 +51,15 @@ class FakeLlamaEngine implements LlamaEngine {
   final List<CreateCall> createCalls = [];
   final Set<void Function()> _activeStops = {};
 
+  final List<String> embedCalls = [];
+  final List<List<String>> embedBatchCalls = [];
+
+  /// The vector [embed] and [embedBatch] return for a text.
+  List<double> Function(String text) vectorFor = (text) => [
+    text.length.toDouble(),
+    1,
+  ];
+
   String? loadedPath;
   ModelParams? loadedParams;
   int getMetadataCalls = 0;
@@ -145,6 +154,23 @@ class FakeLlamaEngine implements LlamaEngine {
       },
     );
     return controller.stream;
+  }
+
+  @override
+  Future<List<double>> embed(String text, {bool normalize = true}) async {
+    _checkNotDisposed('embed');
+    embedCalls.add(text);
+    return vectorFor(text);
+  }
+
+  @override
+  Future<List<List<double>>> embedBatch(
+    List<String> texts, {
+    bool normalize = true,
+  }) async {
+    _checkNotDisposed('embedBatch');
+    embedBatchCalls.add(List.of(texts));
+    return texts.map(vectorFor).toList();
   }
 
   @override

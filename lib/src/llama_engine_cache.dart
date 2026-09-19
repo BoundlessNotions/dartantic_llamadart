@@ -38,6 +38,8 @@ class LlamaEngineCache {
     params.liteRtLmBackend,
     params.chatTemplate,
     params.speculativeRollbackTokenMax,
+    params.batchSize,
+    params.maxParallelSequences,
   ].join('|');
 
   /// Returns a handle on the cached engine for ([modelPath], [params]),
@@ -73,6 +75,21 @@ class LlamaEngineCache {
         // Best effort — the engine never finished loading.
       }
       rethrow;
+    }
+  }
+
+  /// Acquires the engine for ([modelPath], [params]) and waits for exclusive
+  /// use of it. Returns the handle and the function that releases it.
+  Future<(LlamaEngineHandle, void Function())> acquireExclusive(
+    String modelPath,
+    ModelParams params,
+  ) async {
+    while (true) {
+      final handle = await acquire(modelPath, params);
+      final release = await handle.lock();
+      // The holder ahead of us may have evicted it after a failed generation.
+      if (!handle.isEvicted) return (handle, release);
+      release();
     }
   }
 
