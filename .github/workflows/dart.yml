@@ -9,13 +9,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `downgrade` resolves every dependency to its lowest allowed version,
+        # which keeps the pubspec lower bounds honest.
+        deps: [ upgrade, downgrade ]
+    name: build (${{ matrix.deps }})
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - uses: dart-lang/setup-dart@v1
 
       - name: Install dependencies
-        run: dart pub get
+        run: dart pub ${{ matrix.deps }}
 
       - name: Verify formatting
         run: dart format --output=none --set-exit-if-changed .
