@@ -640,34 +640,60 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     );
   }
 
-  List<LlamaContentPart> _toLlamaContentPartsFromList(List<Part> parts) {
-    return parts.map((part) {
-      if (part is TextPart) {
-        return LlamaTextContent(part.text);
-      }
-      if (part is ToolPart) {
-        if (part.kind == ToolPartKind.call) {
-          return LlamaToolCallContent(
-            id: part.callId,
-            name: part.toolName,
-            arguments: Map<String, dynamic>.from(part.arguments ?? {}),
-            rawJson: part.argumentsRaw,
-          );
-        } else {
-          final result = part.result;
-          final resultStr = result is Map || result is List
-              ? jsonEncode(result)
-              : result?.toString() ?? '';
-          return LlamaToolResultContent(
-            id: part.callId,
-            name: part.toolName,
-            result: resultStr,
-          );
-        }
-      }
-      return LlamaTextContent(part.toString());
-    }).toList();
+  List<LlamaContentPart> _toLlamaContentPartsFromList(List<Part> parts) =>
+      parts.map(_toLlamaContentPart).toList();
+
+  // dartantic's Part is genai_primitives' sealed StandardPart, so this switch
+  // is exhaustive and a new part type fails to compile rather than being
+  // stringified into the prompt.
+  LlamaContentPart _toLlamaContentPart(Part part) {
+    return switch (part) {
+      TextPart(:final text) => LlamaTextContent(text),
+      // Each chat template decides whether to render or strip prior
+      // reasoning, so pass it through rather than dropping it here.
+      ThinkingPart(:final text) => LlamaThinkingContent(text),
+      ToolPart(kind: ToolPartKind.call) => LlamaToolCallContent(
+        id: part.callId,
+        name: part.toolName,
+        arguments: Map<String, dynamic>.from(part.arguments ?? {}),
+        rawJson: part.argumentsRaw,
+      ),
+      ToolPart(:final result) => LlamaToolResultContent(
+        id: part.callId,
+        name: part.toolName,
+        result: result is Map || result is List
+            ? jsonEncode(result)
+            : result?.toString() ?? '',
+      ),
+      DataPart(:final bytes, :final mimeType) => switch (_mediaKind(mimeType)) {
+        _MediaKind.image => LlamaImageContent(bytes: bytes),
+        _MediaKind.audio => LlamaAudioContent(bytes: bytes),
+        null => throw UnsupportedError(
+          'llamadart has no content type for $mimeType data',
+        ),
+      },
+      LinkPart(:final url, :final mimeType) => switch ((
+        url.scheme,
+        _mediaKind(mimeType),
+      )) {
+        ('file', _MediaKind.image) => LlamaImageContent(path: url.toFilePath()),
+        ('file', _MediaKind.audio) => LlamaAudioContent(path: url.toFilePath()),
+        ('http' || 'https', _MediaKind.image) => LlamaImageContent(
+          url: url.toString(),
+        ),
+        _ => throw UnsupportedError(
+          'llamadart has no content type for a ${mimeType ?? 'untyped'} '
+          'link to $url',
+        ),
+      },
+    };
   }
+
+  static _MediaKind? _mediaKind(String? mimeType) => switch (mimeType) {
+    final String m when m.startsWith('image/') => _MediaKind.image,
+    final String m when m.startsWith('audio/') => _MediaKind.audio,
+    _ => null,
+  };
 
   LlamaChatRole _toLlamaRole(ChatMessageRole role) {
     switch (role) {
@@ -704,3 +730,5 @@ class _GenerationState {
     engine?.cancelGeneration();
   }
 }
+
+enum _MediaKind { image, audio }

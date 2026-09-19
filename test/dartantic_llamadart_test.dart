@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
 
@@ -135,6 +137,79 @@ void main() {
         ),
       );
       expect(llamaMsg.content, 'You are a helpful assistant.');
+    });
+
+    group('toLlamaMessage part mapping', () {
+      List<LlamaContentPart> convert(List<Part> parts) => model
+          .toLlamaMessage(
+            ChatMessage(role: ChatMessageRole.model, parts: parts),
+            format: ChatFormat.hermes,
+            hasTools: false,
+          )
+          .parts;
+
+      test('passes thinking through as LlamaThinkingContent', () {
+        final parts = convert([
+          const ThinkingPart('secret'),
+          const TextPart('hi'),
+        ]);
+
+        expect(parts, [isA<LlamaThinkingContent>(), isA<LlamaTextContent>()]);
+        expect((parts.first as LlamaThinkingContent).thinking, 'secret');
+      });
+
+      test('maps image and audio data to media content', () {
+        final image = Uint8List.fromList([1, 2, 3]);
+        final audio = Uint8List.fromList([4, 5]);
+        final parts = convert([
+          DataPart(image, mimeType: 'image/png'),
+          DataPart(audio, mimeType: 'audio/wav'),
+        ]);
+
+        expect((parts[0] as LlamaImageContent).bytes, image);
+        expect((parts[1] as LlamaAudioContent).bytes, audio);
+      });
+
+      test('rejects data llamadart has no content type for', () {
+        expect(
+          () => convert([DataPart(Uint8List(1), mimeType: 'application/pdf')]),
+          throwsUnsupportedError,
+        );
+      });
+
+      test('maps file and http links by mime type', () {
+        final parts = convert([
+          LinkPart(Uri.file('/tmp/cat.png'), mimeType: 'image/png'),
+          LinkPart(Uri.file('/tmp/meow.wav'), mimeType: 'audio/wav'),
+          LinkPart(
+            Uri.parse('https://example.com/cat.png'),
+            mimeType: 'image/png',
+          ),
+        ]);
+
+        expect((parts[0] as LlamaImageContent).path, '/tmp/cat.png');
+        expect((parts[1] as LlamaAudioContent).path, '/tmp/meow.wav');
+        expect(
+          (parts[2] as LlamaImageContent).url,
+          'https://example.com/cat.png',
+        );
+      });
+
+      test('rejects links it cannot load', () {
+        expect(
+          () => convert([
+            LinkPart(
+              Uri.parse('https://example.com/meow.wav'),
+              mimeType: 'audio/wav',
+            ),
+          ]),
+          throwsUnsupportedError,
+        );
+        expect(
+          () => convert([LinkPart(Uri.file('/tmp/notes'))]),
+          throwsUnsupportedError,
+        );
+      });
     });
 
     test('buildGenerationParams drops llama.cpp-only knobs for LiteRT-LM', () {

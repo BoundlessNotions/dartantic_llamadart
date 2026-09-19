@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Prior-turn `ThinkingPart`s are passed to llamadart as thinking content
+  (each chat template decides whether to render them) instead of as their
+  `toString()` debug text (`ThinkingPart(text: ...)`) in the prompt.
+  `image/*` and `audio/*` `DataPart`s and `file:`/`http(s)` image
+  `LinkPart`s map to llamadart media content. Any other part now throws
+  `UnsupportedError` rather than being stringified. A GGUF model with no
+  multimodal projector loaded ignores media parts.
 - The text tool-call fallback (used when no tools are passed, e.g.
   prompt-instructed calls) accepts the Hermes/Qwen `{"name", "arguments"}`
   shape (arguments as an object or a JSON string), `{"name", "parameters"}`,
