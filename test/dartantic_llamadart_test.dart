@@ -139,6 +139,101 @@ void main() {
       expect(llamaMsg.content, 'You are a helpful assistant.');
     });
 
+    group('tool schema conversion', () {
+      Tool<Map<String, dynamic>> tool(Map<String, Object?> schema) =>
+          Tool<Map<String, dynamic>>(
+            name: 't',
+            description: 'A tool.',
+            inputSchema: Schema.fromMap(schema),
+            onCall: (_) => {},
+          );
+
+      Map<String, dynamic> param(Map<String, Object?> prop) => model
+          .toolDefinitionFor(
+            tool({
+              'type': 'object',
+              'properties': {'p': prop},
+            }),
+          )
+          .parameters
+          .single
+          .toJsonSchema();
+
+      test('JSON-encodes non-string examples', () {
+        final definition = model.toolDefinitionFor(
+          tool({
+            'type': 'object',
+            'examples': [
+              'plain',
+              {'city': 'Paris'},
+            ],
+          }),
+        );
+
+        expect(definition.description, contains('- plain'));
+        expect(definition.description, contains('- {"city":"Paris"}'));
+      });
+
+      test('keeps the declared type for a non-string enum', () {
+        final schema = param({
+          'type': 'integer',
+          'description': 'Days.',
+          'enum': [1, 2, 3],
+        });
+
+        expect(schema['type'], 'integer');
+        expect(schema['description'], 'Days. Allowed values: 1, 2, 3.');
+      });
+
+      test('uses the non-null member of a nullable type', () {
+        expect(
+          param({
+            'type': ['string', 'null'],
+          })['type'],
+          'string',
+        );
+        expect(
+          param({
+            'type': ['null', 'integer'],
+          })['type'],
+          'integer',
+        );
+      });
+
+      test('maps a null-only type to a described string', () {
+        final schema = param({
+          'type': ['null'],
+        });
+
+        expect(schema['type'], 'string');
+        expect(schema['description'], 'Must be null.');
+      });
+
+      test('maps a union type to a string noting the JSON types', () {
+        final schema = param({
+          'type': ['string', 'integer'],
+        });
+
+        expect(schema['type'], 'string');
+        expect(schema['description'], 'JSON type: one of string, integer.');
+      });
+
+      test('converts nested object properties', () {
+        final schema = param({
+          'type': 'object',
+          'properties': {
+            'n': {'type': 'integer'},
+          },
+          'required': ['n'],
+        });
+
+        expect(schema['properties'], {
+          'n': {'type': 'integer'},
+        });
+        expect(schema['required'], ['n']);
+      });
+    });
+
     group('toLlamaMessage part mapping', () {
       List<LlamaContentPart> convert(List<Part> parts) => model
           .toLlamaMessage(

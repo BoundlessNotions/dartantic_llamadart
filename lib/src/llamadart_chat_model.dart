@@ -221,9 +221,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     var toolCallIdCounter = 0;
     String nextCallId() => 'call_${toolCallIdCounter++}';
 
-    final llamadartTools = tools
-        ?.map((t) => _convertToolToDefinition(t))
-        .toList();
+    final llamadartTools = tools?.map(toolDefinitionFor).toList();
 
     // With tools, llamadart's template handler parses calls into
     // delta.toolCalls. Scanning the content too would parse them twice, so
@@ -357,7 +355,8 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     _ => FinishReason.unspecified,
   };
 
-  ToolDefinition _convertToolToDefinition(Tool<Object> tool) {
+  @visibleForTesting
+  ToolDefinition toolDefinitionFor(Tool<Object> tool) {
     final examples = _extractExamples(tool.inputSchema);
     final fullDescription = examples.isNotEmpty
         ? '${tool.description}\n\nExamples:\n${examples.map((e) => '- $e').join('\n')}'
@@ -366,7 +365,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     return ToolDefinition(
       name: tool.name,
       description: fullDescription,
-      parameters: _convertSchemaToParams(tool.inputSchema),
+      parameters: _convertSchemaToParams(tool.inputSchema?.value),
       handler: (params) async {
         // If a zone-scoped tool-target map is present (keyed by #toolTargets),
         // prefer the real handler from that map over the placeholder onCall.
@@ -379,15 +378,12 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   }
 
   List<String> _extractExamples(Schema? schema) {
-    if (schema == null) return [];
-    final examples = schema['examples'];
-    if (examples is List) {
-      return examples.cast<String>();
-    }
-    return [];
+    final examples = schema?['examples'];
+    if (examples is! List) return [];
+    return [for (final e in examples) e is String ? e : jsonEncode(e)];
   }
 
-  List<ToolParam> _convertSchemaToParams(Schema? schema) {
+  List<ToolParam> _convertSchemaToParams(Map<String, dynamic>? schema) {
     if (schema == null) return [];
 
     final properties = schema['properties'] as Map<String, dynamic>?;
@@ -409,38 +405,55 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     required Map<String, dynamic> prop,
     required bool isRequired,
   }) {
-    final description = prop['description'] as String?;
-
-    if (prop.containsKey('enum')) {
-      final enumValues = (prop['enum'] as List).cast<String>();
+    final notes = <String>[];
+    final values = prop['enum'] as List<dynamic>?;
+    if (values != null && values.every((v) => v is String)) {
       return ToolParam.enumType(
         name,
-        values: enumValues,
-        description: description,
+        values: values.cast<String>(),
+        description: prop['description'] as String?,
         required: isRequired,
       );
     }
+    // ToolParam.enumType only takes strings, and stringifying would have the
+    // model send "1" to a tool expecting 1. Keep the declared type instead
+    // and list the values for the model.
+    if (values != null) {
+      notes.add('Allowed values: ${values.map(jsonEncode).join(', ')}.');
+    }
 
-    final paramType = prop['type'] as String? ?? 'string';
+    final paramType = switch (prop['type']) {
+      final String type => type,
+      // ToolParam has no union type. A nullable type is its non-null member;
+      // anything wider is a string, with the JSON types noted. A null-only
+      // property is also a string: ToolParam.nullType needs llamadart 0.8.21.
+      final List<dynamic> types => switch (types.where((t) => t != 'null')) {
+        final nonNull when nonNull.length == 1 => nonNull.single as String,
+        final nonNull => () {
+          notes.add(
+            nonNull.isEmpty
+                ? 'Must be null.'
+                : 'JSON type: one of ${nonNull.join(', ')}.',
+          );
+          return 'string';
+        }(),
+      },
+      _ => 'string',
+    };
+
+    final description = [
+      prop['description'] as String?,
+      ...notes,
+    ].nonNulls.join(' ');
+    final desc = description.isEmpty ? null : description;
+
     switch (paramType) {
       case 'integer':
-        return ToolParam.integer(
-          name,
-          description: description,
-          required: isRequired,
-        );
+        return ToolParam.integer(name, description: desc, required: isRequired);
       case 'number':
-        return ToolParam.number(
-          name,
-          description: description,
-          required: isRequired,
-        );
+        return ToolParam.number(name, description: desc, required: isRequired);
       case 'boolean':
-        return ToolParam.boolean(
-          name,
-          description: description,
-          required: isRequired,
-        );
+        return ToolParam.boolean(name, description: desc, required: isRequired);
       case 'array':
         final itemSchema = prop['items'] as Map<String, dynamic>?;
         final itemParam = itemSchema != null
@@ -453,35 +466,18 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         return ToolParam.array(
           name,
           itemType: itemParam,
-          description: description,
+          description: desc,
           required: isRequired,
         );
       case 'object':
-        final nestedProps = prop['properties'] as Map<String, dynamic>?;
-        final nestedRequired = prop['required'] as List<dynamic>?;
-        final nestedParams =
-            nestedProps?.entries
-                .map(
-                  (e) => _schemaPropertyToToolParam(
-                    name: e.key,
-                    prop: e.value as Map<String, dynamic>,
-                    isRequired: nestedRequired?.contains(e.key) ?? false,
-                  ),
-                )
-                .toList() ??
-            [];
         return ToolParam.object(
           name,
-          properties: nestedParams,
-          description: description,
+          properties: _convertSchemaToParams(prop),
+          description: desc,
           required: isRequired,
         );
       default:
-        return ToolParam.string(
-          name,
-          description: description,
-          required: isRequired,
-        );
+        return ToolParam.string(name, description: desc, required: isRequired);
     }
   }
 
