@@ -10,7 +10,7 @@ with no network and no API key.
 ```yaml
 dependencies:
   dartantic_ai: ^3.4.2
-  dartantic_llamadart: ^0.6.9
+  dartantic_llamadart: ^0.7.0
 ```
 
 Point the provider at a model file and hand it to an `Agent`:

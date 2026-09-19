@@ -1,4 +1,4 @@
-## Unreleased
+## 0.7.0
 
 - A request that didn't set `maxTokens` generated nothing: the value passed
   to llamadart fell back to 0, and llama.cpp's loop generates exactly that
