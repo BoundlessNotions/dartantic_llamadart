@@ -1,5 +1,11 @@
 ## Unreleased
 
+- A failed request no longer always reloads the model. Only errors from the
+  engine's generation stream that can mean native corruption evict the shared
+  engine (`LlamaInferenceException` and non-llamadart errors). Request-shape
+  errors (`LlamaUnsupportedException`, `LlamaContextException`), a prompt that
+  overflows the context, and errors in this package's own conversion code are
+  rethrown with the engine kept.
 - Concurrent generations on a shared engine no longer truncate each other.
   `sendStream` called `cancelGeneration()` before every generation to stop
   zombies left by timed-out callers, which also silently cut off a generation

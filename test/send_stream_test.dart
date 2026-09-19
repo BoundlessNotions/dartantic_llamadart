@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
 import 'package:llamadart/llamadart.dart'
-    show LlamaChatRole, LlamaInferenceException;
+    show LlamaChatRole, LlamaInferenceException, LlamaUnsupportedException;
 import 'package:test/test.dart';
 
 import 'support/fake_llama_engine.dart';
@@ -396,6 +396,76 @@ void main() {
       expect(factory.engines, hasLength(2));
       gate.complete();
       expect(_text(await slow), 'slow');
+    });
+  });
+
+  group('eviction', () {
+    Future<void> failWith(Object error) async {
+      factory.onCreate = (engine) {
+        if (factory.engines.isEmpty) {
+          engine.enqueue(FakeGeneration(const [], error: error));
+        }
+      };
+      await expectLater(
+        _collectParts(_model().sendStream([ChatMessage.user('1')])),
+        throwsA(same(error)),
+      );
+      await _collectParts(_model().sendStream([ChatMessage.user('2')]));
+    }
+
+    test('keeps the engine on a request-shape error', () async {
+      await failWith(LlamaUnsupportedException('no'));
+
+      expect(factory.engines, hasLength(1));
+      expect(factory.last.createCalls, hasLength(2));
+    });
+
+    test('keeps the engine when the prompt overflows the context', () async {
+      await failWith(
+        LlamaInferenceException(
+          'Generation failed',
+          Exception('Tokenization failed or prompt too long'),
+        ),
+      );
+
+      expect(factory.engines, hasLength(1));
+    });
+
+    test('reloads the engine after an inference failure', () async {
+      await failWith(LlamaInferenceException('Generation failed'));
+
+      expect(factory.engines, hasLength(2));
+      expect(factory.engines.first.isDisposed, isTrue);
+    });
+
+    test('reloads the engine after a raw backend error', () async {
+      await failWith(StateError('native'));
+
+      expect(factory.engines, hasLength(2));
+    });
+
+    test('keeps the engine when our own conversion throws', () async {
+      final model = _model(
+        tools: [
+          Tool<Map<String, dynamic>>(
+            name: 'broken',
+            description: 'A boolean property schema',
+            inputSchema: Schema.fromMap({
+              'type': 'object',
+              'properties': {'x': true},
+            }),
+            onCall: (_) => {},
+          ),
+        ],
+      );
+
+      await expectLater(
+        _collectParts(model.sendStream([ChatMessage.user('1')])),
+        throwsA(isA<TypeError>()),
+      );
+      await _collectParts(_model().sendStream([ChatMessage.user('2')]));
+
+      expect(factory.engines, hasLength(1));
     });
   });
 }
