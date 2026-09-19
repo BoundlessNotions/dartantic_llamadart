@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dartantic_interface/dartantic_interface.dart';
@@ -131,5 +132,26 @@ void main() {
       );
     }
     expect(texts.join(), isNotEmpty);
+  }, skip: skip);
+
+  test('outputSchema constrains a real model to the schema', () async {
+    final texts = <String>[];
+    await for (final result in model().sendStream(
+      [ChatMessage.user('Is the sky blue? Answer in JSON.')],
+      outputSchema: Schema.fromMap({
+        'type': 'object',
+        'properties': {
+          'ok': {'type': 'boolean'},
+        },
+        'required': ['ok'],
+      }),
+    )) {
+      texts.addAll(
+        result.output.parts.whereType<TextPart>().map((p) => p.text),
+      );
+    }
+
+    final decoded = jsonDecode(texts.join()) as Map<String, dynamic>;
+    expect(decoded['ok'], isA<bool>());
   }, skip: skip);
 }
