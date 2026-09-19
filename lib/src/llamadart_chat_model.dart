@@ -19,9 +19,6 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
   // ignore: overridden_fields, annotate_overrides
   final List<Tool<Object>>? tools;
 
-  LlamaEngine? _engine;
-  String? _engineCacheKey;
-
   LlamadartChatModel({
     required this.provider,
     required super.name,
@@ -29,9 +26,9 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     required super.defaultOptions,
   });
 
-  Future<void> _ensureInitialized() async {
-    if (_engine != null) return;
-
+  /// Load-time parameters; together with the model path they pick the shared
+  /// engine in [LlamaEngineCache].
+  ModelParams _modelParams() {
     // When a GGUF MTP drafter is configured, llama.cpp requires the context to
     // reserve at least `draftTokenMax` recurrent-state rollback snapshots
     // (n_rs_seq) — otherwise generation fails with "MTP speculative decoding is
@@ -40,7 +37,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final ggufMtpOn = mtpDraft != null && mtpDraft.isNotEmpty;
     final draftTokenMax = defaultOptions.mtpDraftTokenMax ?? 1;
 
-    final params = ModelParams(
+    return ModelParams(
       contextSize: defaultOptions.nCtx ?? 8192,
       gpuLayers: defaultOptions.nGpuLayers ?? ModelParams.maxGpuLayers,
       preferredBackend: defaultOptions.preferredBackend,
@@ -48,34 +45,10 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
       chatTemplate: defaultOptions.chatTemplate,
       speculativeRollbackTokenMax: ggufMtpOn ? draftTokenMax : 0,
     );
-
-    // Engines are cached process-wide: model load (weights + graph compile +
-    // context allocation) is paid once per (path, params), not per chat model.
-    _engineCacheKey = LlamaEngineCache.keyFor(provider.modelPath, params);
-    _engine = await LlamaEngineCache.instance.acquire(
-      provider.modelPath,
-      params,
-    );
   }
 
-  /// Evicts the shared engine so the next call reloads a clean one.
-  ///
-  /// The native runtime can be left in a corrupted state after a failed
-  /// generation; reusing it then crashes (SIGSEGV) on a worker thread.
-  /// Evicting here converts that fatal native crash into a recoverable
-  /// per-call error.
-  Future<void> _resetEngine() async {
-    final key = _engineCacheKey;
-    if (key != null) {
-      await LlamaEngineCache.instance.evict(key);
-    }
-    _engine = null;
-    _engineCacheKey = null;
-  }
-
-  Future<ChatFormat> _getChatFormat() async {
-    await _ensureInitialized();
-    final metadata = await _engine!.getMetadata();
+  Future<ChatFormat> _getChatFormat(LlamaEngine engine) async {
+    final metadata = await engine.getMetadata();
     final template = metadata['tokenizer.chat_template'];
     return ChatTemplateEngine.detectFormat(template);
   }
@@ -149,16 +122,23 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     LlamadartChatOptions? options,
     Schema? outputSchema,
   }) async* {
-    await _ensureInitialized();
+    // Acquire per call rather than holding the engine: another model sharing
+    // it may have evicted it after a failed generation, and the cache then
+    // hands out a fresh one.
+    final handle = await LlamaEngineCache.instance.acquire(
+      provider.modelPath,
+      _modelParams(),
+    );
+    final engine = handle.engine;
 
     // The engine is shared across chat models. A caller that timed out on a
     // previous call cannot cancel the underlying native generation via
     // `.timeout` — it keeps running. Interrupt it here so this call doesn't
     // race (or queue behind) an abandoned zombie generation. Safe when idle:
     // the cancel token is per-generation and null between runs.
-    _engine!.cancelGeneration();
+    engine.cancelGeneration();
 
-    final format = await _getChatFormat();
+    final format = await _getChatFormat(engine);
     final hasTools =
         outputSchema != null || (tools != null && tools!.isNotEmpty);
 
@@ -203,7 +183,7 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     final grammar = grammarForSchema(outputSchema, isLiteRtLm: isLiteRtLm);
 
     try {
-      await for (final chunk in _engine!.create(
+      await for (final chunk in engine.create(
         llamaMessages,
         enableThinking: true,
         params: buildGenerationParams(
@@ -273,9 +253,10 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
         );
       }
     } catch (_) {
-      // A failed native generation can corrupt the engine; reusing it on the
-      // next call segfaults. Rebuild on the next call instead of crashing.
-      await _resetEngine();
+      // A failed native generation can corrupt the engine, and reusing it
+      // segfaults on a worker thread. Evict it so the next call, from this or
+      // any model sharing it, reloads a clean one.
+      await LlamaEngineCache.instance.evict(handle);
       rethrow;
     }
   }
@@ -606,6 +587,5 @@ class LlamadartChatModel extends ChatModel<LlamadartChatOptions> {
     // The engine is owned by LlamaEngineCache and shared across models — do
     // not dispose it here. Use LlamaEngineCache.instance.disposeAll() at app
     // shutdown to release native resources.
-    _engine = null;
   }
 }

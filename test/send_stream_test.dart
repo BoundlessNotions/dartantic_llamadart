@@ -1,6 +1,7 @@
 import 'package:dartantic_interface/dartantic_interface.dart';
 import 'package:dartantic_llamadart/dartantic_llamadart.dart';
-import 'package:llamadart/llamadart.dart' show LlamaChatRole;
+import 'package:llamadart/llamadart.dart'
+    show LlamaChatRole, LlamaInferenceException;
 import 'package:test/test.dart';
 
 import 'support/fake_llama_engine.dart';
@@ -238,6 +239,40 @@ void main() {
           'functions',
         ),
       );
+    });
+  });
+
+  group('shared engine', () {
+    test('two models on one key share an engine', () async {
+      final a = _model();
+      final b = _model();
+      await _collectParts(a.sendStream([ChatMessage.user('hi')]));
+      await _collectParts(b.sendStream([ChatMessage.user('hi')]));
+
+      expect(factory.engines, hasLength(1));
+      expect(factory.last.createCalls, hasLength(2));
+    });
+
+    test('an eviction by one model is seen by the others', () async {
+      final a = _model();
+      final b = _model();
+      await _collectParts(b.sendStream([ChatMessage.user('warm up')]));
+      final first = factory.last;
+      first.enqueue(
+        FakeGeneration(const [], error: LlamaInferenceException('boom')),
+      );
+
+      await expectLater(
+        _collectParts(a.sendStream([ChatMessage.user('hi')])),
+        throwsA(isA<LlamaInferenceException>()),
+      );
+      expect(first.isDisposed, isTrue);
+
+      // The disposed fake throws if touched, so this passing means b
+      // acquired the replacement.
+      await _collectParts(b.sendStream([ChatMessage.user('again')]));
+      expect(factory.engines, hasLength(2));
+      expect(factory.last.createCalls, hasLength(1));
     });
   });
 }

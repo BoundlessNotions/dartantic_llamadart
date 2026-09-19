@@ -26,7 +26,7 @@ class LlamaEngineCache {
   @visibleForTesting
   LlamaEngine Function() engineFactory = defaultEngineFactory;
 
-  final Map<String, Future<LlamaEngine>> _engines = {};
+  final Map<String, _EngineEntry> _entries = {};
 
   static String keyFor(String modelPath, ModelParams params) => [
     modelPath,
@@ -38,51 +38,83 @@ class LlamaEngineCache {
     params.speculativeRollbackTokenMax,
   ].join('|');
 
-  /// Returns the cached engine for ([modelPath], [params]), loading the model
-  /// on first use. A failed load is not cached — the next call retries.
-  Future<LlamaEngine> acquire(String modelPath, ModelParams params) {
+  /// Returns a handle on the cached engine for ([modelPath], [params]),
+  /// loading the model on first use. A failed load is not cached; the next
+  /// call retries.
+  ///
+  /// Callers should acquire per use rather than hold the engine: after
+  /// [evict], the next acquire loads a fresh engine, while a held one is
+  /// disposed.
+  Future<LlamaEngineHandle> acquire(
+    String modelPath,
+    ModelParams params,
+  ) async {
     final key = keyFor(modelPath, params);
-    final existing = _engines[key];
-    if (existing != null) return existing;
-
-    final future = () async {
-      final engine = engineFactory();
-      try {
-        await engine.loadModel(modelPath, modelParams: params);
-        return engine;
-      } catch (_) {
-        _engines.remove(key);
-        try {
-          await engine.dispose();
-        } catch (_) {
-          // Best effort — the engine never finished loading.
-        }
-        rethrow;
-      }
-    }();
-    _engines[key] = future;
-    return future;
+    final entry = _entries[key] ??= _EngineEntry(_load(modelPath, params));
+    try {
+      return LlamaEngineHandle._(key, entry, await entry.engine);
+    } catch (_) {
+      if (identical(_entries[key], entry)) _entries.remove(key);
+      rethrow;
+    }
   }
 
-  /// Removes and disposes the engine under [key]. Used when a failed native
-  /// generation may have corrupted the engine — the next [acquire] reloads.
-  Future<void> evict(String key) async {
-    final future = _engines.remove(key);
-    if (future == null) return;
+  Future<LlamaEngine> _load(String modelPath, ModelParams params) async {
+    final engine = engineFactory();
     try {
-      final engine = await future;
+      await engine.loadModel(modelPath, modelParams: params);
+      return engine;
+    } catch (_) {
+      try {
+        await engine.dispose();
+      } catch (_) {
+        // Best effort — the engine never finished loading.
+      }
+      rethrow;
+    }
+  }
+
+  /// Removes and disposes the engine behind [handle]. Used when a failed
+  /// native generation may have corrupted the engine; the next [acquire]
+  /// reloads. A no-op if that engine was already evicted.
+  Future<void> evict(LlamaEngineHandle handle) async {
+    if (!identical(_entries[handle.key], handle._entry)) return;
+    _entries.remove(handle.key);
+    await _dispose(handle._entry);
+  }
+
+  /// Disposes every cached engine. For app shutdown and tests.
+  Future<void> disposeAll() async {
+    final entries = _entries.values.toList();
+    _entries.clear();
+    for (final entry in entries) {
+      await _dispose(entry);
+    }
+  }
+
+  Future<void> _dispose(_EngineEntry entry) async {
+    try {
+      final engine = await entry.engine;
       engine.cancelGeneration();
       await engine.dispose();
     } catch (_) {
       // Best effort — the engine may already be unusable.
     }
   }
+}
 
-  /// Disposes every cached engine. For app shutdown and tests.
-  Future<void> disposeAll() async {
-    final keys = _engines.keys.toList();
-    for (final key in keys) {
-      await evict(key);
-    }
-  }
+/// A loaded engine plus the per-engine state [LlamaEngineCache] keeps for it.
+class LlamaEngineHandle {
+  LlamaEngineHandle._(this.key, this._entry, this.engine);
+
+  /// The cache key, from [LlamaEngineCache.keyFor].
+  final String key;
+  final LlamaEngine engine;
+  final _EngineEntry _entry;
+}
+
+class _EngineEntry {
+  _EngineEntry(this.engine);
+
+  final Future<LlamaEngine> engine;
 }
