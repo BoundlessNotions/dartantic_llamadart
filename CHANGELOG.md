@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Tool schemas with non-string `examples`, non-string `enum` values, or a
+  list-valued `type` (e.g. `["string", "null"]`) no longer throw a
+  `TypeError`. Non-string examples are JSON-encoded; a non-string enum keeps
+  its declared type and lists the allowed values in the description; a
+  nullable type uses its non-null member, and a wider union becomes a string
+  with the JSON types noted.
 - Prior-turn `ThinkingPart`s are passed to llamadart as thinking content
   (each chat template decides whether to render them) instead of as their
   `toString()` debug text (`ThinkingPart(text: ...)`) in the prompt.
