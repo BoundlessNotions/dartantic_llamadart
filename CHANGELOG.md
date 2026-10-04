@@ -1,3 +1,12 @@
+## 0.7.1
+
+- Allow llamadart 0.9 and 0.10 (`>=0.8.4 <0.11.0`). No API change here; the
+  package analyzes and its tests pass at both ends of the range.
+- Resolving llamadart 0.10 changes what one existing option does:
+  `LlamadartChatOptions.chatTemplate` is rendered for GGUF models, where
+  llamadart 0.8 ignored it in favor of the template in the GGUF file
+  (https://github.com/leehack/llamadart/issues/710).
+
 ## 0.7.0
 
 - `LlamadartChatOptions.mmprojPath` loads a multimodal projector with the
