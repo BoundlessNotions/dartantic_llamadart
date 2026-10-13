@@ -72,6 +72,9 @@ class FakeLlamaEngine implements LlamaEngine {
   int disposeCalls = 0;
   bool _ready = false;
 
+  // LlamaEngine declares isDisposed from llamadart 0.11; `@override` is an
+  // analyzer warning against the older releases the constraint still allows.
+  // ignore: annotate_overrides
   bool get isDisposed => disposeCalls > 0;
 
   /// Queues the stream the next `create` call replays.

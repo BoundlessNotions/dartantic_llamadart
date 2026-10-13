@@ -5,6 +5,11 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # The llamadart constraint is open to every 0.x release, so nothing here
+  # changes when one ships. The weekly `upgrade` leg is what finds a release
+  # that breaks this package.
+  schedule:
+    - cron: '0 6 * * 1'
 
 jobs:
   build:

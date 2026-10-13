@@ -1,3 +1,16 @@
+## 0.7.2
+
+- Allow every llamadart 0.x release from 0.8.4 (`>=0.8.4 <1.0.0`), where the
+  constraint stopped at `<0.11.0` and had to be raised for each llamadart
+  minor. No API change here; the package analyzes and its tests pass with
+  llamadart 0.11.1 and with the 0.8.4 floor. The llamadart members this
+  package calls that 0.11 deprecates (`loadModel`, `loadMultimodalProjector`,
+  `liteRtLmBackend`, `draftModelPath`) are documented to keep working until
+  llamadart 1.0.
+- llamadart 0.11 moves the default LiteRT-LM runtime to `0.17.0-8`. An app
+  that copies the runtime libraries into a directory named for that version
+  has to follow it.
+
 ## 0.7.1
 
 - Allow llamadart 0.9 and 0.10 (`>=0.8.4 <0.11.0`). No API change here; the
